@@ -19,6 +19,46 @@ def extraire_ville(quartier):
     match = re.search(r'\(([^)]+)\)', quartier)
     return match.group(1) if match else quartier
 
+def construire_url_annonce(prop, list_item=None):
+    """
+    Construit une URL Sarouty fiable.
+    Format canonique (redirigé par le site) :
+    https://www.sarouty.ma/{acheter|louer}/{type}-{ville}-{quartier}-{id}/
+    Fallback ultra-robuste : https://www.sarouty.ma/acheter/{id}
+    """
+    list_item = list_item or {}
+    pid = prop.get("property_id") or list_item.get("property_id")
+    if not pid:
+        return None
+
+    category_key = (
+        prop.get("property_category_key")
+        or list_item.get("property_category_key")
+        or "buy"
+    )
+    categorie = "louer" if category_key == "rent" else "acheter"
+
+    type_bien = slugify(
+        prop.get("property_housing_type")
+        or list_item.get("property_housing_type")
+        or "bien"
+    )
+    loc = prop.get("location") or {}
+    ville_raw = (
+        loc.get("url_city_slug")
+        or list_item.get("location_url_slug")
+        or "maroc"
+    )
+    ville = slugify(ville_raw) or "maroc"
+    quartier_raw = loc.get("name_primary") or list_item.get("location_name") or ""
+    quartier = slugify(quartier_raw) if quartier_raw else ""
+    if quartier == "bien":
+        quartier = ""
+
+    if quartier and quartier != ville:
+        return f"https://www.sarouty.ma/{categorie}/{type_bien}-{ville}-{quartier}-{pid}/"
+    return f"https://www.sarouty.ma/{categorie}/{type_bien}-{ville}-{pid}/"
+
 def scraper_sarouty(max_pages=MAX_PAGES, region_ids=None, category='1'):
     """
     category: '1' pour résidentiel, '2' pour commercial
@@ -29,7 +69,7 @@ def scraper_sarouty(max_pages=MAX_PAGES, region_ids=None, category='1'):
     # Construction des filtres avec la catégorie choisie
     filters = [
         '{"field":"buy_or_rent","operator":"eq","value":1}',
-        f'{{"field":"type","operator":"eq","value":"{category}"}}',  # ← dynamique
+        f'{{"field":"type","operator":"eq","value":"{category}"}}',
         f'{{"field":"location_name","operator":"in","value":"{location_value}"}}',
         '{"field":"housing_type","operator":"in","value":"35,1,22,10,5,48,56"}',
         '{"field":"level","operator":"eq","value":1}',
@@ -58,20 +98,21 @@ def scraper_sarouty(max_pages=MAX_PAGES, region_ids=None, category='1'):
             prop = detail.get("data", {}).get("data", detail.get("data", {}))
             
             loc = prop.get("location", {})
-            quartier_brut = loc.get("name_primary")
-            ville_brute = loc.get("url_city_slug")
-            path = prop.get("path") or prop.get("slug")
-            url_annonce = f"https://www.sarouty.ma{path}" if path and path.startswith('/') else f"https://www.sarouty.ma/{path}"
-            
+            quartier_brut = loc.get("name_primary") or item.get("location_name")
+            ville_brute = loc.get("url_city_slug") or item.get("location_url_slug")
+
+            url_annonce = construire_url_annonce(prop, list_item=item)
+
             toutes.append({
-                "property_id": pid, "url_annonce": url_annonce,
-                "titre": prop.get("property_title_fr") or "Sans titre",
+                "property_id": pid,
+                "url_annonce": url_annonce,
+                "titre": prop.get("property_title_fr") or item.get("property_title_fr") or "Sans titre",
                 "description": prop.get("property_text_fr") or "",
-                "prix": prop.get("price", {}).get("price") or 0,
-                "superficie": prop.get("property_sqft") or 0,
-                "chambres": prop.get("total_bedroom"),
-                "salles_de_bain": prop.get("total_bathroom"),
-                "type_bien": prop.get("property_housing_type"),
+                "prix": (prop.get("price") or {}).get("price") or (item.get("price") or {}).get("price") or 0,
+                "superficie": prop.get("property_sqft") or item.get("property_sqft") or 0,
+                "chambres": prop.get("total_bedroom") or item.get("total_bedroom"),
+                "salles_de_bain": prop.get("total_bathroom") or item.get("total_bathroom"),
+                "type_bien": prop.get("property_housing_type") or item.get("property_housing_type"),
                 "quartier": quartier_brut,
                 "ville": extraire_ville(quartier_brut) or ville_brute
             })
@@ -83,5 +124,4 @@ def scraper_sarouty(max_pages=MAX_PAGES, region_ids=None, category='1'):
     return len(toutes)
 
 if __name__ == "__main__":
-    # Exemple : scraper les résidentiels (défaut)
     scraper_sarouty()

@@ -32,3 +32,17 @@ DELAI_ENTRE_PAGES = 2     # Secondes d'attente entre les pages
 MAX_PAGES_PAR_LOT = 3
 # Base de données (pour la prochaine étape)
 DB_PATH = "alomrane.db"
+
+# ---- Mubawab ----
+MUBAWAB_REGIONS = {
+    "casablanca": {
+        "nom": "Casablanca",
+        "url": "https://www.mubawab.ma/fr/ct/casablanca/immobilier-a-vendre-all:o:n:sc:commercial-sale,land-sale,other-sale,riad-sale,villa-sale",
+    },
+    "rabat": {
+        "nom": "Rabat",
+        "url": "https://www.mubawab.ma/fr/ct/rabat/immobilier-a-vendre-all:sc:land-sale,riad-sale,villa-sale",
+    },
+}
+MUBAWAB_MAX_PAGES = 3
+MUBAWAB_HEADLESS = True

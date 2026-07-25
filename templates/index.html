@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Veille Immobilière Maroc</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="app">
+    <header class="header">
+        <div class="header-brand">
+            <h1>Veille Immobilière Maroc</h1>
+            <p class="subtitle">Al Omrane, Sarouty & Mubawab — opportunités et nouvelles annonces</p>
+        </div>
+    </header>
+
+    <section id="stats-cards" class="stats-grid">
+        <div class="stat-card loading-card">Chargement…</div>
+    </section>
+
+    <section class="panel filters-panel">
+        <div class="filters-row">
+            <label>Source</label>
+            <select id="source">
+                <option value="all">Toutes</option>
+                <option value="alomrane">Al Omrane</option>
+                <option value="sarouty">Sarouty</option>
+                <option value="mubawab">Mubawab</option>
+            </select>
+
+            <input type="number" id="budget_min" placeholder="Budget min (DH)" step="1000">
+            <input type="number" id="budget_max" placeholder="Budget max (DH)" step="1000">
+            <input type="text" id="ville" placeholder="Ville" list="villes-list">
+            <datalist id="villes-list"></datalist>
+
+            <select id="type_bien"><option value="">Type</option></select>
+            <select id="badge" class="alomrane-only"><option value="">Badge</option></select>
+            <select id="etage" class="alomrane-only"><option value="">Étage</option></select>
+
+            <input type="number" id="surface_min" placeholder="Surface min (m²)">
+            <input type="number" id="surface_max" placeholder="Surface max (m²)">
+            <input type="number" id="prix_m2_min" placeholder="Prix/m² min">
+            <input type="number" id="prix_m2_max" placeholder="Prix/m² max">
+
+            <button type="button" id="btn-search" class="btn btn-primary">Rechercher</button>
+            <button type="button" id="btn-reset" class="btn btn-secondary">Réinitialiser</button>
+        </div>
+    </section>
+
+    <section class="panel scrape-panel">
+        <div class="scrape-group">
+            <label>Région Al Omrane</label>
+            <select id="region_select"><option value="">— Choisir —</option></select>
+            <button type="button" id="btn-scrape-ao" class="btn btn-ao">Scraper Al Omrane</button>
+        </div>
+        <div class="scrape-divider"></div>
+        <div class="scrape-group">
+            <label>Région Sarouty</label>
+            <select id="region_sarouty">
+                <option value="all">Toutes</option>
+                <option value="casablanca">Casablanca</option>
+                <option value="rabat">Rabat</option>
+            </select>
+            <label>Catégorie</label>
+            <select id="category_sarouty">
+                <option value="1">Résidentiel</option>
+                <option value="2">Commercial</option>
+            </select>
+            <button type="button" id="btn-scrape-sar" class="btn btn-sar">Scraper Sarouty</button>
+        </div>
+        <div class="scrape-divider"></div>
+        <div class="scrape-group">
+            <label>Région Mubawab</label>
+            <select id="region_mubawab">
+                <option value="rabat">Rabat</option>
+                <option value="casablanca">Casablanca</option>
+                <option value="all">Toutes</option>
+            </select>
+            <button type="button" id="btn-scrape-mub" class="btn btn-mub">Scraper Mubawab</button>
+        </div>
+        <div id="scraping-status" class="scraping-status hidden"></div>
+    </section>
+
+    <section class="panel results-panel">
+        <div class="tabs">
+            <button type="button" class="tab active" data-tab="alomrane">
+                Al Omrane <span id="count-ao" class="tab-count">0</span>
+            </button>
+            <button type="button" class="tab" data-tab="sarouty">
+                Sarouty <span id="count-sar" class="tab-count">0</span>
+            </button>
+            <button type="button" class="tab" data-tab="mubawab">
+                Mubawab <span id="count-mub" class="tab-count">0</span>
+            </button>
+        </div>
+
+        <div id="tab-alomrane" class="tab-content active">
+            <div id="alomrane-list" class="yt-list">
+                <div class="empty-state">Lancez une recherche</div>
+            </div>
+        </div>
+
+        <div id="tab-sarouty" class="tab-content">
+            <div class="table-wrap">
+                <table class="data-table" id="table-sarouty">
+                    <thead>
+                        <tr>
+                            <th>Projet</th>
+                            <th>Localisation</th>
+                            <th>Type</th>
+                            <th>Surface</th>
+                            <th>Prix</th>
+                            <th>Prix/m²</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-sarouty">
+                        <tr><td colspan="7" class="empty">Lancez une recherche</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-mubawab" class="tab-content">
+            <div class="table-wrap">
+                <table class="data-table" id="table-mubawab">
+                    <thead>
+                        <tr>
+                            <th>Projet</th>
+                            <th>Localisation</th>
+                            <th>Type</th>
+                            <th>Surface</th>
+                            <th>Prix</th>
+                            <th>Prix/m²</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-mubawab">
+                        <tr><td colspan="7" class="empty">Lancez une recherche</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel analytics-panel">
+        <h2>Analyse des opportunités</h2>
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>Distribution prix/m²</h3>
+                <canvas id="chart-histogram"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Comparaison par ville</h3>
+                <canvas id="chart-comparison"></canvas>
+            </div>
+        </div>
+        <div class="opportunities-section">
+            <h3>Top opportunités</h3>
+            <div id="opportunities-list" class="opportunities-list"></div>
+        </div>
+    </section>
+</div>
+
+<script src="{{ url_for('static', filename='js/utils.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tables.js') }}"></script>
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

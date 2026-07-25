@@ -77,6 +77,25 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sarouty_ville ON annonces_sarouty (ville)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sarouty_type ON annonces_sarouty (type_bien)")
+
+    # ---- Tables Mubawab ----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS annonces_mubawab (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url_annonce TEXT UNIQUE NOT NULL,
+            titre TEXT,
+            description TEXT,
+            prix INTEGER,
+            superficie INTEGER,
+            type_bien TEXT,
+            localisation TEXT,
+            ville TEXT,
+            region TEXT,
+            date_extraction DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mubawab_ville ON annonces_mubawab (ville)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mubawab_type ON annonces_mubawab (type_bien)")
     
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_url ON projets (url)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_localisation ON projets (localisation)")
@@ -93,103 +112,57 @@ def get_existing_urls():
     urls = {row[0] for row in cursor.fetchall()}
     conn.close()
     return urls
-# database/db_manager.py
-# ... (garder tout le code existant) ...
-
-# ==================== FONCTIONS POUR LES LISTES DYNAMIQUES ====================
+# ==================== LISTES DYNAMIQUES ====================
 
 def get_types_by_source(source):
-    """
-    Retourne la liste des types de biens disponibles pour une source donnée.
-    source: 'alomrane', 'sarouty', ou 'all'
-    """
+    """Retourne les types de biens pour une source."""
     conn = get_connection()
     cursor = conn.cursor()
     if source == 'alomrane':
         cursor.execute("SELECT DISTINCT type_bien FROM projets ORDER BY type_bien")
     elif source == 'sarouty':
         cursor.execute("SELECT DISTINCT type_bien FROM annonces_sarouty ORDER BY type_bien")
-    else:  # 'all'
+    elif source == 'mubawab':
+        cursor.execute("SELECT DISTINCT type_bien FROM annonces_mubawab ORDER BY type_bien")
+    else:
         cursor.execute("""
             SELECT DISTINCT type_bien FROM (
                 SELECT type_bien FROM projets
                 UNION
                 SELECT type_bien FROM annonces_sarouty
-            ) ORDER BY type_bien
-        """)
-    types = [row[0] for row in cursor.fetchall() if row[0] is not None and row[0] != '']
-    conn.close()
-    return types
-
-
-
-def get_types_by_source(source):
-    """
-    Retourne la liste des types de biens disponibles pour une source donnée.
-    source: 'alomrane', 'sarouty', ou 'all'
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    if source == 'alomrane':
-        cursor.execute("SELECT DISTINCT type_bien FROM projets ORDER BY type_bien")
-    elif source == 'sarouty':
-        cursor.execute("SELECT DISTINCT type_bien FROM annonces_sarouty ORDER BY type_bien")
-    else:  # 'all'
-        cursor.execute("""
-            SELECT DISTINCT type_bien FROM (
-                SELECT type_bien FROM projets
                 UNION
-                SELECT type_bien FROM annonces_sarouty
+                SELECT type_bien FROM annonces_mubawab
             ) ORDER BY type_bien
         """)
-    types = [row[0] for row in cursor.fetchall() if row[0] is not None and row[0] != '']
+    types = [row[0] for row in cursor.fetchall() if row[0]]
     conn.close()
     return types
+
 
 def get_villes_by_source(source):
-    """
-    Retourne la liste des villes disponibles pour une source donnée.
-    """
+    """Retourne les villes pour une source."""
     conn = get_connection()
     cursor = conn.cursor()
     if source == 'alomrane':
         cursor.execute("SELECT DISTINCT localisation FROM projets ORDER BY localisation")
     elif source == 'sarouty':
         cursor.execute("SELECT DISTINCT ville FROM annonces_sarouty ORDER BY ville")
+    elif source == 'mubawab':
+        cursor.execute("SELECT DISTINCT ville FROM annonces_mubawab ORDER BY ville")
     else:
         cursor.execute("""
             SELECT DISTINCT ville FROM (
                 SELECT localisation AS ville FROM projets
                 UNION
                 SELECT ville FROM annonces_sarouty
+                UNION
+                SELECT ville FROM annonces_mubawab
             ) ORDER BY ville
         """)
-    villes = [row[0] for row in cursor.fetchall() if row[0] is not None and row[0] != '']
+    villes = [row[0] for row in cursor.fetchall() if row[0]]
     conn.close()
     return villes
 
-def get_villes_by_source(source):
-    """
-    Retourne la liste des villes disponibles pour une source donnée.
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    if source == 'alomrane':
-        cursor.execute("SELECT DISTINCT localisation FROM projets ORDER BY localisation")
-    elif source == 'sarouty':
-        cursor.execute("SELECT DISTINCT ville FROM annonces_sarouty ORDER BY ville")
-    else:
-        cursor.execute("""
-            SELECT DISTINCT ville FROM (
-                SELECT localisation AS ville FROM projets
-                UNION
-                SELECT ville FROM annonces_sarouty
-            ) ORDER BY ville
-        """)
-    villes = [row[0] for row in cursor.fetchall() if row[0] is not None and row[0] != '']
-    conn.close()
-    return villes
-    
 def save_projets(projets_list):
     if not projets_list:
         return 0
@@ -250,6 +223,121 @@ def save_projets(projets_list):
         conn.close()
     return inserted
 
+def _parse_prix_m2(prix_str, surface_str):
+    try:
+        prix = float(str(prix_str).replace('DH', '').replace(' ', '').strip())
+        surface = float(str(surface_str).replace('m²', '').replace(' ', '').strip())
+        if surface > 0:
+            return round(prix / surface, 2)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _enrich_produit(prod):
+    row = dict(prod)
+    row['prix_m2'] = _parse_prix_m2(row.get('prix'), row.get('surface'))
+    return row
+
+
+def get_projet_detail(projet_id):
+    """Retourne un projet avec ses lots et produits."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM projets WHERE id = ?", (projet_id,))
+    p = cursor.fetchone()
+    if not p:
+        conn.close()
+        return None
+    projet = dict(p)
+    projet['lots'] = []
+    cursor.execute("SELECT * FROM lots WHERE projet_id = ?", (projet_id,))
+    for lot in cursor.fetchall():
+        lot_dict = dict(lot)
+        cursor.execute("SELECT * FROM produits WHERE lot_id = ?", (lot['id'],))
+        lot_dict['lignes'] = [_enrich_produit(prod) for prod in cursor.fetchall()]
+        projet['lots'].append(lot_dict)
+    conn.close()
+    return projet
+
+
+def get_projets_resume(**filters):
+    """Liste projets Al Omrane avec agrégats, filtrée au niveau produit."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    prix_m2_expr = """
+        ROUND(
+            CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) /
+            NULLIF(CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL), 0),
+            2
+        )
+    """
+
+    query = f"""
+        SELECT
+            p.id,
+            p.titre,
+            p.localisation,
+            p.type_bien,
+            p.badge,
+            p.url,
+            p.region,
+            COUNT(DISTINCT l.id) AS nb_lots,
+            COUNT(pr.id) AS nb_produits,
+            MIN({prix_m2_expr}) AS prix_m2_min,
+            MAX({prix_m2_expr}) AS prix_m2_max
+        FROM projets p
+        JOIN lots l ON l.projet_id = p.id
+        JOIN produits pr ON pr.lot_id = l.id
+        WHERE 1=1
+    """
+    params = []
+
+    if filters.get('ville'):
+        query += " AND p.localisation = ?"
+        params.append(filters['ville'])
+    if filters.get('type_bien'):
+        query += " AND p.type_bien = ?"
+        params.append(filters['type_bien'])
+    if filters.get('badge'):
+        query += " AND p.badge = ?"
+        params.append(filters['badge'])
+    if filters.get('etage'):
+        query += " AND pr.etage = ?"
+        params.append(filters['etage'])
+    if filters.get('budget_min') is not None:
+        query += " AND CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) >= ?"
+        params.append(filters['budget_min'])
+    if filters.get('budget_max') is not None:
+        query += " AND CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) <= ?"
+        params.append(filters['budget_max'])
+    if filters.get('surface_min') is not None:
+        query += " AND CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL) >= ?"
+        params.append(filters['surface_min'])
+    if filters.get('surface_max') is not None:
+        query += " AND CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL) <= ?"
+        params.append(filters['surface_max'])
+    if filters.get('prix_m2_min') is not None:
+        query += f" AND {prix_m2_expr} >= ?"
+        params.append(filters['prix_m2_min'])
+    if filters.get('prix_m2_max') is not None:
+        query += f" AND {prix_m2_expr} <= ?"
+        params.append(filters['prix_m2_max'])
+
+    query += " GROUP BY p.id ORDER BY prix_m2_min ASC"
+    if filters.get('limit'):
+        query += " LIMIT ?"
+        params.append(filters['limit'])
+
+    cursor.execute(query, params)
+    result = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return result
+
+
 def get_all_projets(limit=100):
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -263,7 +351,7 @@ def get_all_projets(limit=100):
         for lot in cursor.fetchall():
             lot_dict = dict(lot)
             cursor.execute("SELECT * FROM produits WHERE lot_id = ?", (lot['id'],))
-            lot_dict['lignes'] = [dict(prod) for prod in cursor.fetchall()]
+            lot_dict['lignes'] = [_enrich_produit(prod) for prod in cursor.fetchall()]
             projet['lots'].append(lot_dict)
         projets.append(projet)
     conn.close()
@@ -348,6 +436,87 @@ def get_annonces_sarouty_filtered(**filters):
     conn.close()
     return result
 
+# ==================== MUBAWAB ====================
+def save_annonces_mubawab(annonces_list):
+    if not annonces_list:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    inserted = 0
+    try:
+        cursor.execute("BEGIN TRANSACTION")
+        for a in annonces_list:
+            cursor.execute("""
+                INSERT OR IGNORE INTO annonces_mubawab
+                (url_annonce, titre, description, prix, superficie, type_bien, localisation, ville, region)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                a.get('url_annonce') or a.get('url'),
+                a.get('titre') or a.get('title'),
+                a.get('description'),
+                a.get('prix', 0),
+                a.get('superficie') if a.get('superficie') is not None else a.get('surface', 0),
+                a.get('type_bien'),
+                a.get('localisation') or a.get('location'),
+                a.get('ville'),
+                a.get('region'),
+            ))
+            if cursor.rowcount > 0:
+                inserted += 1
+        conn.commit()
+        print(f"💾 {inserted} annonces Mubawab insérées.")
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Erreur insertion Mubawab : {e}")
+    finally:
+        conn.close()
+    return inserted
+
+
+def get_annonces_mubawab_filtered(**filters):
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    query = """
+        SELECT *,
+               ROUND(prix / NULLIF(superficie, 0), 2) AS prix_m2
+        FROM annonces_mubawab
+        WHERE 1=1
+    """
+    params = []
+    if filters.get('ville'):
+        query += " AND ville = ?"
+        params.append(filters['ville'])
+    if filters.get('type_bien'):
+        query += " AND type_bien = ?"
+        params.append(filters['type_bien'])
+    if filters.get('region'):
+        query += " AND region = ?"
+        params.append(filters['region'])
+    if filters.get('budget_min') is not None:
+        query += " AND prix >= ?"
+        params.append(filters['budget_min'])
+    if filters.get('budget_max') is not None:
+        query += " AND prix <= ?"
+        params.append(filters['budget_max'])
+    if filters.get('superficie_min') is not None:
+        query += " AND superficie >= ?"
+        params.append(filters['superficie_min'])
+    if filters.get('superficie_max') is not None:
+        query += " AND superficie <= ?"
+        params.append(filters['superficie_max'])
+    if filters.get('prix_m2_min') is not None:
+        query += " AND ROUND(prix / NULLIF(superficie, 0), 2) >= ?"
+        params.append(filters['prix_m2_min'])
+    if filters.get('prix_m2_max') is not None:
+        query += " AND ROUND(prix / NULLIF(superficie, 0), 2) <= ?"
+        params.append(filters['prix_m2_max'])
+    query += " ORDER BY prix_m2 ASC"
+    cursor.execute(query, params)
+    result = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return result
+
 # ==================== STATISTIQUES GLOBALES ====================
 def get_statistiques_globales():
     conn = get_connection()
@@ -361,7 +530,12 @@ def get_statistiques_globales():
     stats['nb_produits'] = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM annonces_sarouty")
     stats['nb_sarouty'] = cursor.fetchone()[0]
-    
+    try:
+        cursor.execute("SELECT COUNT(*) FROM annonces_mubawab")
+        stats['nb_mubawab'] = cursor.fetchone()[0]
+    except sqlite3.OperationalError:
+        stats['nb_mubawab'] = 0
+
     cursor.execute("SELECT DISTINCT localisation FROM projets")
     stats['villes'] = [row[0] for row in cursor.fetchall()]
     cursor.execute("SELECT DISTINCT type_bien FROM projets")
@@ -370,11 +544,19 @@ def get_statistiques_globales():
     stats['badges'] = [row[0] for row in cursor.fetchall()]
     cursor.execute("SELECT DISTINCT etage FROM produits WHERE etage IS NOT NULL AND etage != ''")
     stats['etages'] = [row[0] for row in cursor.fetchall()]
-    
+
     cursor.execute("SELECT DISTINCT ville FROM annonces_sarouty")
     stats['villes_sarouty'] = [row[0] for row in cursor.fetchall()]
     cursor.execute("SELECT DISTINCT type_bien FROM annonces_sarouty")
     stats['types_sarouty'] = [row[0] for row in cursor.fetchall()]
+    try:
+        cursor.execute("SELECT DISTINCT ville FROM annonces_mubawab")
+        stats['villes_mubawab'] = [row[0] for row in cursor.fetchall()]
+        cursor.execute("SELECT DISTINCT type_bien FROM annonces_mubawab")
+        stats['types_mubawab'] = [row[0] for row in cursor.fetchall()]
+    except sqlite3.OperationalError:
+        stats['villes_mubawab'] = []
+        stats['types_mubawab'] = []
     conn.close()
     return stats
 

@@ -22,7 +22,6 @@ def init_db():
             localisation TEXT,
             titre_foncier TEXT,
             description TEXT,
-            badge TEXT,
             date_extraction DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -44,18 +43,9 @@ def init_db():
             no_produit TEXT,
             surface TEXT,
             prix TEXT,
-            etage TEXT,
-            designation TEXT,
-            url TEXT,
             FOREIGN KEY (lot_id) REFERENCES lots (id) ON DELETE CASCADE
         )
     """)
-    # Migrations Al Omrane
-    for col in ['etage', 'designation', 'url']:
-        try:
-            cursor.execute(f"ALTER TABLE produits ADD COLUMN {col} TEXT")
-        except sqlite3.OperationalError:
-            pass
 
     # ---- Tables Sarouty ----
     cursor.execute("""
@@ -112,10 +102,10 @@ def get_existing_urls():
     urls = {row[0] for row in cursor.fetchall()}
     conn.close()
     return urls
+
 # ==================== LISTES DYNAMIQUES ====================
 
 def get_types_by_source(source):
-    """Retourne les types de biens pour une source."""
     conn = get_connection()
     cursor = conn.cursor()
     if source == 'alomrane':
@@ -138,17 +128,27 @@ def get_types_by_source(source):
     conn.close()
     return types
 
-
 def get_villes_by_source(source):
-    """Retourne les villes pour une source."""
     conn = get_connection()
     cursor = conn.cursor()
     if source == 'alomrane':
         cursor.execute("SELECT DISTINCT localisation FROM projets ORDER BY localisation")
     elif source == 'sarouty':
-        cursor.execute("SELECT DISTINCT ville FROM annonces_sarouty ORDER BY ville")
+        cursor.execute("""
+            SELECT DISTINCT valeur FROM (
+                SELECT ville AS valeur FROM annonces_sarouty
+                UNION
+                SELECT quartier AS valeur FROM annonces_sarouty
+            ) WHERE valeur IS NOT NULL AND valeur != '' ORDER BY valeur
+        """)
     elif source == 'mubawab':
-        cursor.execute("SELECT DISTINCT ville FROM annonces_mubawab ORDER BY ville")
+        cursor.execute("""
+            SELECT DISTINCT valeur FROM (
+                SELECT ville AS valeur FROM annonces_mubawab
+                UNION
+                SELECT localisation AS valeur FROM annonces_mubawab
+            ) WHERE valeur IS NOT NULL AND valeur != '' ORDER BY valeur
+        """)
     else:
         cursor.execute("""
             SELECT DISTINCT ville FROM (
@@ -156,8 +156,12 @@ def get_villes_by_source(source):
                 UNION
                 SELECT ville FROM annonces_sarouty
                 UNION
+                SELECT quartier AS ville FROM annonces_sarouty
+                UNION
                 SELECT ville FROM annonces_mubawab
-            ) ORDER BY ville
+                UNION
+                SELECT localisation AS ville FROM annonces_mubawab
+            ) WHERE ville IS NOT NULL AND ville != '' ORDER BY ville
         """)
     villes = [row[0] for row in cursor.fetchall() if row[0]]
     conn.close()
@@ -174,8 +178,8 @@ def save_projets(projets_list):
         for projet in projets_list:
             cursor.execute("""
                 INSERT OR IGNORE INTO projets 
-                (url, region, type_bien, titre, localisation, titre_foncier, description, badge)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (url, region, type_bien, titre, localisation, titre_foncier, description)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 projet.get('lien', ''),
                 projet.get('region', ''),
@@ -183,8 +187,7 @@ def save_projets(projets_list):
                 projet.get('titre', ''),
                 projet.get('localisation', ''),
                 projet.get('titre_foncier', ''),
-                projet.get('description', ''),
-                projet.get('badge', '')
+                projet.get('description', '')
             ))
             if cursor.rowcount > 0:
                 inserted += 1
@@ -203,16 +206,13 @@ def save_projets(projets_list):
                     lot_id = cursor.lastrowid
                     for ligne in lot.get('lignes', []):
                         cursor.execute("""
-                            INSERT INTO produits (lot_id, no_produit, surface, prix, etage, designation, url)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO produits (lot_id, no_produit, surface, prix)
+                            VALUES (?, ?, ?, ?)
                         """, (
                             lot_id,
                             ligne.get('no_produit', ''),
                             ligne.get('surface', ''),
-                            ligne.get('prix', ''),
-                            ligne.get('etage', ''),
-                            ligne.get('designation', ''),
-                            ligne.get('url', '')
+                            ligne.get('prix', '')
                         ))
         conn.commit()
         print(f"💾 {inserted} projets Al Omrane insérés.")
@@ -227,21 +227,18 @@ def _parse_prix_m2(prix_str, surface_str):
     try:
         prix = float(str(prix_str).replace('DH', '').replace(' ', '').strip())
         surface = float(str(surface_str).replace('m²', '').replace(' ', '').strip())
-        if surface > 0:
+        if surface > 0 and prix > 0:
             return round(prix / surface, 2)
     except (TypeError, ValueError):
         pass
     return None
-
 
 def _enrich_produit(prod):
     row = dict(prod)
     row['prix_m2'] = _parse_prix_m2(row.get('prix'), row.get('surface'))
     return row
 
-
 def get_projet_detail(projet_id):
-    """Retourne un projet avec ses lots et produits."""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -261,9 +258,7 @@ def get_projet_detail(projet_id):
     conn.close()
     return projet
 
-
 def get_projets_resume(**filters):
-    """Liste projets Al Omrane avec agrégats, filtrée au niveau produit."""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -282,7 +277,6 @@ def get_projets_resume(**filters):
             p.titre,
             p.localisation,
             p.type_bien,
-            p.badge,
             p.url,
             p.region,
             COUNT(DISTINCT l.id) AS nb_lots,
@@ -292,22 +286,30 @@ def get_projets_resume(**filters):
         FROM projets p
         JOIN lots l ON l.projet_id = p.id
         JOIN produits pr ON pr.lot_id = l.id
-        WHERE 1=1
+        WHERE CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) > 0
     """
     params = []
 
     if filters.get('ville'):
         query += " AND p.localisation = ?"
         params.append(filters['ville'])
-    if filters.get('type_bien'):
-        query += " AND p.type_bien = ?"
-        params.append(filters['type_bien'])
-    if filters.get('badge'):
-        query += " AND p.badge = ?"
-        params.append(filters['badge'])
-    if filters.get('etage'):
-        query += " AND pr.etage = ?"
-        params.append(filters['etage'])
+    if filters.get('type_brut_list'):
+        brut_list = filters['type_brut_list']
+        if brut_list:
+            placeholders = ','.join(['?'] * len(brut_list))
+            query += f" AND p.type_bien IN ({placeholders})"
+            params.extend(brut_list)
+        else:
+            query += " AND 1=0"
+    elif filters.get('type_bien'):
+        from services.type_mapping import get_brut_types_for_normalized
+        brut_list = get_brut_types_for_normalized(filters['type_bien'])
+        if brut_list:
+            placeholders = ','.join(['?'] * len(brut_list))
+            query += f" AND p.type_bien IN ({placeholders})"
+            params.extend(brut_list)
+        else:
+            query += " AND 1=0"
     if filters.get('budget_min') is not None:
         query += " AND CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) >= ?"
         params.append(filters['budget_min'])
@@ -336,7 +338,6 @@ def get_projets_resume(**filters):
     result = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return result
-
 
 def get_all_projets(limit=100):
     conn = get_connection()
@@ -407,11 +408,28 @@ def get_annonces_sarouty_filtered(**filters):
     """
     params = []
     if 'ville' in filters and filters['ville']:
-        query += " AND ville = ?"
+        query += " AND (ville = ? OR quartier = ?)"
         params.append(filters['ville'])
+        params.append(filters['ville'])
+    
     if 'type_bien' in filters and filters['type_bien']:
-        query += " AND type_bien = ?"
-        params.append(filters['type_bien'])
+        from services.type_mapping import get_brut_types_for_normalized
+        brut_list = get_brut_types_for_normalized(filters['type_bien'])
+        if brut_list:
+            placeholders = ','.join(['?'] * len(brut_list))
+            query += f" AND type_bien IN ({placeholders})"
+            params.extend(brut_list)
+        else:
+            query += " AND 1=0"
+    elif 'type_brut_list' in filters and filters['type_brut_list']:
+        brut_list = filters['type_brut_list']
+        if brut_list:
+            placeholders = ','.join(['?'] * len(brut_list))
+            query += f" AND type_bien IN ({placeholders})"
+            params.extend(brut_list)
+        else:
+            query += " AND 1=0"
+
     if 'budget_min' in filters and filters['budget_min']:
         query += " AND prix >= ?"
         params.append(filters['budget_min'])
@@ -472,7 +490,6 @@ def save_annonces_mubawab(annonces_list):
         conn.close()
     return inserted
 
-
 def get_annonces_mubawab_filtered(**filters):
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -484,33 +501,52 @@ def get_annonces_mubawab_filtered(**filters):
         WHERE 1=1
     """
     params = []
-    if filters.get('ville'):
-        query += " AND ville = ?"
+
+    if 'ville' in filters and filters['ville']:
+        query += " AND (ville = ? OR localisation = ?)"
         params.append(filters['ville'])
-    if filters.get('type_bien'):
-        query += " AND type_bien = ?"
-        params.append(filters['type_bien'])
-    if filters.get('region'):
+        params.append(filters['ville'])
+
+    if 'type_bien' in filters and filters['type_bien']:
+        from services.type_mapping import get_brut_types_for_normalized
+        brut_list = get_brut_types_for_normalized(filters['type_bien'])
+        if brut_list:
+            placeholders = ','.join(['?'] * len(brut_list))
+            query += f" AND type_bien IN ({placeholders})"
+            params.extend(brut_list)
+        else:
+            query += " AND 1=0"
+    elif 'type_brut_list' in filters and filters['type_brut_list']:
+        brut_list = filters['type_brut_list']
+        if brut_list:
+            placeholders = ','.join(['?'] * len(brut_list))
+            query += f" AND type_bien IN ({placeholders})"
+            params.extend(brut_list)
+        else:
+            query += " AND 1=0"
+
+    if 'region' in filters and filters['region']:
         query += " AND region = ?"
         params.append(filters['region'])
-    if filters.get('budget_min') is not None:
+    if 'budget_min' in filters and filters['budget_min'] is not None:
         query += " AND prix >= ?"
         params.append(filters['budget_min'])
-    if filters.get('budget_max') is not None:
+    if 'budget_max' in filters and filters['budget_max'] is not None:
         query += " AND prix <= ?"
         params.append(filters['budget_max'])
-    if filters.get('superficie_min') is not None:
+    if 'superficie_min' in filters and filters['superficie_min'] is not None:
         query += " AND superficie >= ?"
         params.append(filters['superficie_min'])
-    if filters.get('superficie_max') is not None:
+    if 'superficie_max' in filters and filters['superficie_max'] is not None:
         query += " AND superficie <= ?"
         params.append(filters['superficie_max'])
-    if filters.get('prix_m2_min') is not None:
+    if 'prix_m2_min' in filters and filters['prix_m2_min'] is not None:
         query += " AND ROUND(prix / NULLIF(superficie, 0), 2) >= ?"
         params.append(filters['prix_m2_min'])
-    if filters.get('prix_m2_max') is not None:
+    if 'prix_m2_max' in filters and filters['prix_m2_max'] is not None:
         query += " AND ROUND(prix / NULLIF(superficie, 0), 2) <= ?"
         params.append(filters['prix_m2_max'])
+
     query += " ORDER BY prix_m2 ASC"
     cursor.execute(query, params)
     result = [dict(row) for row in cursor.fetchall()]
@@ -540,10 +576,6 @@ def get_statistiques_globales():
     stats['villes'] = [row[0] for row in cursor.fetchall()]
     cursor.execute("SELECT DISTINCT type_bien FROM projets")
     stats['types_biens'] = [row[0] for row in cursor.fetchall()]
-    cursor.execute("SELECT DISTINCT badge FROM projets")
-    stats['badges'] = [row[0] for row in cursor.fetchall()]
-    cursor.execute("SELECT DISTINCT etage FROM produits WHERE etage IS NOT NULL AND etage != ''")
-    stats['etages'] = [row[0] for row in cursor.fetchall()]
 
     cursor.execute("SELECT DISTINCT ville FROM annonces_sarouty")
     stats['villes_sarouty'] = [row[0] for row in cursor.fetchall()]
@@ -560,7 +592,7 @@ def get_statistiques_globales():
     conn.close()
     return stats
 
-def get_prix_m2_stats(ville=None, type_bien=None, etage=None):
+def get_prix_m2_stats(ville=None, type_bien=None):
     conn = get_connection()
     cursor = conn.cursor()
     query = """
@@ -569,33 +601,35 @@ def get_prix_m2_stats(ville=None, type_bien=None, etage=None):
             p.type_bien,
             pr.surface,
             pr.prix,
-            pr.etage,
             CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL) as surface_m2,
             CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) as prix_brut
         FROM produits pr
         JOIN lots l ON l.id = pr.lot_id
         JOIN projets p ON p.id = l.projet_id
-        WHERE 1=1
+        WHERE CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) > 0
     """
     params = []
     if ville:
         query += " AND p.localisation = ?"
         params.append(ville)
     if type_bien:
-        query += " AND p.type_bien = ?"
-        params.append(type_bien)
-    if etage:
-        query += " AND pr.etage = ?"
-        params.append(etage)
+        from services.type_mapping import get_brut_types_for_normalized
+        brut_list = get_brut_types_for_normalized(type_bien)
+        if brut_list:
+            placeholders = ','.join(['?'] * len(brut_list))
+            query += f" AND p.type_bien IN ({placeholders})"
+            params.extend(brut_list)
+        else:
+            query += " AND 1=0"
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     prix_m2_list = []
     for row in rows:
         try:
-            surface = float(row[5])
-            prix = float(row[6])
-            if surface > 0:
+            surface = float(row[4])
+            prix = float(row[5])
+            if surface > 0 and prix > 0:
                 prix_m2_list.append(prix / surface)
         except:
             pass

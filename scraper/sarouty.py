@@ -14,18 +14,15 @@ def slugify(text):
     text = re.sub(r'[\s-]+', '-', text).strip('-')
     return text
 
-def extraire_ville(quartier):
-    if not quartier: return None
-    match = re.search(r'\(([^)]+)\)', quartier)
-    return match.group(1) if match else quartier
+def nettoyer_ville(slug):
+    """Transforme un slug de ville en nom lisible (ex: 'rabat-sale' -> 'Rabat Sale')."""
+    if not slug:
+        return None
+    # Remplacer les tirets par des espaces et mettre en titre (première lettre de chaque mot en majuscule)
+    return slug.replace('-', ' ').title()
 
 def construire_url_annonce(prop, list_item=None):
-    """
-    Construit une URL Sarouty fiable.
-    Format canonique (redirigé par le site) :
-    https://www.sarouty.ma/{acheter|louer}/{type}-{ville}-{quartier}-{id}/
-    Fallback ultra-robuste : https://www.sarouty.ma/acheter/{id}
-    """
+    """Construit une URL Sarouty fiable."""
     list_item = list_item or {}
     pid = prop.get("property_id") or list_item.get("property_id")
     if not pid:
@@ -66,7 +63,6 @@ def scraper_sarouty(max_pages=MAX_PAGES, region_ids=None, category='1'):
     if region_ids is None: region_ids = [35, 113]
     location_value = ",".join(str(id) for id in region_ids)
 
-    # Construction des filtres avec la catégorie choisie
     filters = [
         '{"field":"buy_or_rent","operator":"eq","value":1}',
         f'{{"field":"type","operator":"eq","value":"{category}"}}',
@@ -88,18 +84,26 @@ def scraper_sarouty(max_pages=MAX_PAGES, region_ids=None, category='1'):
     for page in range(1, max_pages + 1):
         params = {"limit": 25, "page": page, "filters": filters}
         resp = session.get(API_BASE_URL, params=params)
-        if resp.status_code != 200: break
+        if resp.status_code != 200:
+            break
         annonces = resp.json().get('data', {}).get('data', [])
-        if not annonces: break
+        if not annonces:
+            break
+
         for item in annonces:
             pid = item.get("property_id")
-            if not pid: continue
+            if not pid:
+                continue
+
             detail = session.get(f"{API_BASE_URL}/{pid}").json()
             prop = detail.get("data", {}).get("data", detail.get("data", {}))
-            
+
             loc = prop.get("location", {})
             quartier_brut = loc.get("name_primary") or item.get("location_name")
             ville_brute = loc.get("url_city_slug") or item.get("location_url_slug")
+
+            # Nettoyer la ville
+            ville = nettoyer_ville(ville_brute)
 
             url_annonce = construire_url_annonce(prop, list_item=item)
 
@@ -113,12 +117,12 @@ def scraper_sarouty(max_pages=MAX_PAGES, region_ids=None, category='1'):
                 "chambres": prop.get("total_bedroom") or item.get("total_bedroom"),
                 "salles_de_bain": prop.get("total_bathroom") or item.get("total_bathroom"),
                 "type_bien": prop.get("property_housing_type") or item.get("property_housing_type"),
-                "quartier": quartier_brut,
-                "ville": extraire_ville(quartier_brut) or ville_brute
+                "quartier": quartier_brut,  # nom brut du quartier (peut contenir la ville entre parenthèses)
+                "ville": ville              # ville nettoyée (ex: "Rabat Sale")
             })
             time.sleep(0.3)
         time.sleep(1)
-    
+
     if toutes:
         save_annonces_sarouty(toutes)
     return len(toutes)

@@ -1,5 +1,5 @@
 const expandedProjects = new Set();
-const expandedLots = new Set(); // keys: `${projetId}-${lotId}`
+const expandedLots = new Set();
 
 function renderSarouty(rows) {
     const tbody = document.getElementById('tbody-sarouty');
@@ -74,6 +74,8 @@ function escapeAttr(str) {
         .replace(/</g, '&lt;');
 }
 
+/* ==================== AL OMRANE – TABLE WITH HIERARCHY ==================== */
+
 function renderAlomrane(rows) {
     const container = document.getElementById('alomrane-list');
     document.getElementById('count-ao').textContent = rows.length;
@@ -83,49 +85,65 @@ function renderAlomrane(rows) {
         return;
     }
 
-    container.innerHTML = rows.map(p => {
+    let html = `
+        <div class="table-wrap">
+            <table class="data-table clickable" id="table-alomrane">
+                <thead>
+                    <tr>
+                        <th>Projet</th>
+                        <th>Localisation</th>
+                        <th>Type</th>
+                        <th>Surface</th>
+                        <th>Prix</th>
+                        <th>Prix/m²</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-alomrane">
+    `;
+
+    rows.forEach(p => {
         const isOpen = expandedProjects.has(p.id);
-        return `
-        <article class="yt-card ${isOpen ? 'is-open' : ''}" data-id="${p.id}">
-            <div class="yt-card-header" data-toggle="${p.id}">
-                <button class="yt-chevron ${isOpen ? 'open' : ''}" aria-label="Développer" data-id="${p.id}">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
-                </button>
-                <div class="yt-card-main">
-                    <div class="yt-card-title-row">
-                        <h3 class="yt-card-title">${fmt(p.titre)}</h3>
-                        ${badgeHTML(p.badge)}
-                    </div>
-                    <div class="yt-card-meta">
-                        <span>${fmt(p.localisation)}</span>
-                        <span class="dot">·</span>
-                        <span>${fmt(p.type_bien)}</span>
-                        <span class="dot">·</span>
-                        <span>${fmt(p.nb_lots)} lot${p.nb_lots > 1 ? 's' : ''}</span>
-                        <span class="dot">·</span>
-                        <span>${fmt(p.nb_produits)} produit${p.nb_produits > 1 ? 's' : ''}</span>
-                    </div>
-                </div>
-                <div class="yt-card-stats">
-                    <div class="yt-stat">
-                        <span class="yt-stat-label">Prix/m²</span>
-                        <span class="yt-stat-value">${formatPrixM2Range(p.prix_m2_min, p.prix_m2_max)}</span>
-                    </div>
+        html += `
+            <tr class="project-row ${isOpen ? 'expanded' : ''}" data-project-id="${p.id}">
+                <td><strong>${fmt(p.titre)}</strong></td>
+                <td>${fmt(p.localisation)}</td>
+                <td>${fmt(p.type_bien)}</td>
+                <td>—</td>
+                <td>—</td>
+                <td class="prix-m2">${formatPrixM2Range(p.prix_m2_min, p.prix_m2_max)}</td>
+                <td>
                     ${p.url
                         ? `<button class="btn btn-sm btn-consult" data-url="${escapeAttr(p.url)}">Accéder</button>`
-                        : ''}
-                </div>
-            </div>
-            <div class="yt-card-body" id="detail-panel-${p.id}" style="display:${isOpen ? 'block' : 'none'}">
-                ${isOpen ? '<div class="yt-loading">Chargement des lots…</div>' : ''}
-            </div>
-        </article>`;
-    }).join('');
+                        : '—'}
+                    <button class="btn btn-sm btn-detail" data-id="${p.id}">
+                        ${isOpen ? 'Masquer' : 'Détails'}
+                    </button>
+                </td>
+            </tr>
+            <tr class="detail-row" id="detail-row-${p.id}" style="display:${isOpen ? 'table-row' : 'none'}">
+                <td colspan="7">
+                    <div class="detail-panel" id="detail-panel-${p.id}">
+                        ${isOpen ? '<div class="yt-loading">Chargement des lots…</div>' : ''}
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
 
-    container.querySelectorAll('[data-toggle]').forEach(el => {
-        el.addEventListener('click', (e) => {
-            if (e.target.closest('.btn-consult')) return;
-            toggleProject(parseInt(el.dataset.toggle, 10));
+    html += `
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    container.innerHTML = html;
+
+    container.querySelectorAll('.btn-detail').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const projectId = parseInt(btn.dataset.id, 10);
+            toggleProject(projectId);
         });
     });
 
@@ -137,26 +155,28 @@ function renderAlomrane(rows) {
     });
 
     expandedProjects.forEach(id => {
-        if (rows.some(r => r.id === id)) loadProjectDetail(id);
+        if (rows.some(r => r.id === id)) {
+            loadProjectDetail(id);
+        }
     });
 }
 
 async function toggleProject(id) {
-    const card = document.querySelector(`.yt-card[data-id="${id}"]`);
-    const panel = document.getElementById(`detail-panel-${id}`);
-    const chevron = card?.querySelector('.yt-chevron');
-    if (!panel) return;
+    const row = document.querySelector(`tr.project-row[data-project-id="${id}"]`);
+    const detailRow = document.getElementById(`detail-row-${id}`);
+    const btn = document.querySelector(`.btn-detail[data-id="${id}"]`);
+    if (!detailRow || !row || !btn) return;
 
     if (expandedProjects.has(id)) {
         expandedProjects.delete(id);
-        panel.style.display = 'none';
-        card?.classList.remove('is-open');
-        chevron?.classList.remove('open');
+        detailRow.style.display = 'none';
+        row.classList.remove('expanded');
+        btn.textContent = 'Détails';
     } else {
         expandedProjects.add(id);
-        panel.style.display = 'block';
-        card?.classList.add('is-open');
-        chevron?.classList.add('open');
+        detailRow.style.display = 'table-row';
+        row.classList.add('expanded');
+        btn.textContent = 'Masquer';
         await loadProjectDetail(id);
     }
 }
@@ -164,11 +184,15 @@ async function toggleProject(id) {
 async function loadProjectDetail(id) {
     const panel = document.getElementById(`detail-panel-${id}`);
     if (!panel) return;
+
+    if (panel.dataset.loaded === 'true') return;
+
     panel.innerHTML = '<div class="yt-loading">Chargement des lots…</div>';
 
     try {
         const projet = await fetchJSON(`/api/alomrane/projets/${id}`);
         panel.innerHTML = renderHierarchyHTML(projet);
+        panel.dataset.loaded = 'true';
         bindLotToggles(panel, id);
         bindConsultButtons(panel);
     } catch (err) {
@@ -256,8 +280,6 @@ function renderProduitsTable(produits, projet) {
                     <th>Surface</th>
                     <th>Prix</th>
                     <th>Prix/m²</th>
-                    <th>Étage</th>
-                    <th>Désignation</th>
                     <th></th>
                 </tr>
             </thead>
@@ -268,8 +290,6 @@ function renderProduitsTable(produits, projet) {
                         <td>${formatSurface(l.surface)}</td>
                         <td>${formatPrix(l.prix)}</td>
                         <td class="prix-m2">${formatPrixM2(l.prix_m2)}</td>
-                        <td>${l.etage ? `<span class="etage-tag">${l.etage}</span>` : '—'}</td>
-                        <td class="prod-desig">${fmt(l.designation)}</td>
                         <td>
                             ${(l.url || projet.url)
                                 ? `<button class="btn btn-sm btn-consult" data-url="${escapeAttr(l.url || projet.url)}">Accéder</button>`

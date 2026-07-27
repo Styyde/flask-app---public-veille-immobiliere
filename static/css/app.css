@@ -645,3 +645,40 @@ input:focus, select:focus {
     .charts-grid { grid-template-columns: 1fr; }
     .filters-row input, .filters-row select { min-width: 140px; }
 }
+/* Table Al Omrane avec lignes extensibles */
+.data-table.clickable tbody tr.project-row {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.data-table.clickable tbody tr.project-row:hover {
+    background: #eaf2f8;
+}
+
+.data-table.clickable tbody tr.project-row.expanded {
+    background: #d4e6f1;
+}
+
+.data-table .detail-row td {
+    padding: 0 !important;
+    background: #f8fafc;
+}
+
+.detail-panel {
+    padding: 12px 16px;
+}
+
+.btn-detail {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--primary);
+    font-size: 0.8rem;
+    padding: 2px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 4px;
+}
+
+.btn-detail:hover {
+    background: var(--primary-bg);
+}

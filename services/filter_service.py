@@ -11,10 +11,10 @@ from database.db_manager import (
     get_statistiques_globales,
     get_prix_m2_stats,
 )
+from .type_mapping import get_brut_types_for_normalized, get_all_normalized_types
 
 
 def parse_filtres_from_request(args):
-    """Parse les query params Flask en dict de filtres."""
     def _float(key):
         val = args.get(key)
         if val is not None and val != '':
@@ -38,9 +38,7 @@ def parse_filtres_from_request(args):
         'budget_min': _float('budget_min'),
         'budget_max': _float('budget_max'),
         'ville': args.get('ville') or None,
-        'type_bien': args.get('type_bien') or None,
-        'badge': args.get('badge') or None,
-        'etage': args.get('etage') or None,
+        'type_bien': args.get('type_bien') or None,  # normalisé
         'prix_m2_min': _float('prix_m2_min'),
         'prix_m2_max': _float('prix_m2_max'),
         'surface_min': _float('surface_min'),
@@ -50,20 +48,36 @@ def parse_filtres_from_request(args):
 
 
 def get_filtres_disponibles(source='all'):
+    # Retourne les types normalisés pour l'UI
+    types = get_all_normalized_types()
     return {
-        'types': get_types_by_source(source),
+        'types': types,
         'villes': get_villes_by_source(source),
     }
 
 
+def _convert_normalized_to_brut_list(normalized_type):
+    if not normalized_type:
+        return []
+    return get_brut_types_for_normalized(normalized_type)
+
+
 def filtrer_alomrane(**filters):
-    """Retourne la liste des projets Al Omrane (résumé avec agrégats)."""
     f = {k: v for k, v in filters.items() if k != 'source'}
+    # Conversion du type normalisé en liste de types bruts
+    if 'type_bien' in f and f['type_bien']:
+        brut_list = _convert_normalized_to_brut_list(f['type_bien'])
+        if brut_list:
+            f['type_brut_list'] = brut_list
+        # on supprime l'ancien type_bien pour éviter confusion
+        del f['type_bien']
+    else:
+        # Si aucun type, on ne filtre pas
+        pass
     return get_projets_resume(**f)
 
 
 def _url_sarouty_fiable(row):
-    """URL Sarouty fiable : le site redirige /acheter/{id} vers l'URL canonique."""
     pid = row.get('property_id')
     if pid:
         return f"https://www.sarouty.ma/acheter/{pid}"
@@ -74,13 +88,12 @@ def _url_sarouty_fiable(row):
 
 
 def filtrer_sarouty(**filters):
-    """Retourne les annonces Sarouty formatées pour l'UI."""
     sarouty_filters = {}
     mapping = {
         'budget_min': 'budget_min',
         'budget_max': 'budget_max',
         'ville': 'ville',
-        'type_bien': 'type_bien',
+        'type_bien': 'type_bien',  # on garde le type normalisé
         'prix_m2_min': 'prix_m2_min',
         'prix_m2_max': 'prix_m2_max',
         'surface_min': 'superficie_min',
@@ -93,17 +106,28 @@ def filtrer_sarouty(**filters):
     rows = get_annonces_sarouty_filtered(**sarouty_filters)
     result = []
     for row in rows:
-        localisation = row.get('ville') or ''
-        if row.get('quartier'):
-            localisation = f"{row['quartier']}, {localisation}" if localisation else row['quartier']
+        quartier = row.get('quartier')
+        ville = row.get('ville')
+
+        if quartier and ville and quartier == ville:
+            localisation = ville
+        elif quartier and ville:
+            localisation = f"{quartier}, {ville}"
+        else:
+            localisation = quartier or ville or ""
+
+        prix = row.get('prix', 0)
+        prix_affichage = "À négocier" if prix <= 0 else f"{prix} DH"
+
         result.append({
             'id': row.get('id'),
             'property_id': row.get('property_id'),
             'projet': row.get('titre'),
             'localisation': localisation,
-            'type': row.get('type_bien'),
+            'type': row.get('type_bien'),  # type brut
             'surface': row.get('superficie'),
-            'prix': row.get('prix'),
+            'prix': prix,
+            'prix_affichage': prix_affichage,
             'prix_m2': row.get('prix_m2'),
             'url_annonce': _url_sarouty_fiable(row),
         })
@@ -111,7 +135,6 @@ def filtrer_sarouty(**filters):
 
 
 def filtrer_mubawab(**filters):
-    """Retourne les annonces Mubawab formatées pour l'UI."""
     mubawab_filters = {}
     mapping = {
         'budget_min': 'budget_min',
@@ -122,6 +145,7 @@ def filtrer_mubawab(**filters):
         'prix_m2_max': 'prix_m2_max',
         'surface_min': 'superficie_min',
         'surface_max': 'superficie_max',
+        'region': 'region',
     }
     for src, dst in mapping.items():
         if filters.get(src) is not None:
@@ -130,13 +154,17 @@ def filtrer_mubawab(**filters):
     rows = get_annonces_mubawab_filtered(**mubawab_filters)
     result = []
     for row in rows:
+        prix = row.get('prix', 0)
+        prix_affichage = "À négocier" if prix <= 0 else f"{prix} DH"
+
         result.append({
             'id': row.get('id'),
             'projet': row.get('titre'),
             'localisation': row.get('localisation') or row.get('ville'),
             'type': row.get('type_bien'),
             'surface': row.get('superficie'),
-            'prix': row.get('prix'),
+            'prix': prix,
+            'prix_affichage': prix_affichage,
             'prix_m2': row.get('prix_m2'),
             'url_annonce': row.get('url_annonce'),
             'region': row.get('region'),
@@ -145,7 +173,6 @@ def filtrer_mubawab(**filters):
 
 
 def filtrer_produits(**filters):
-    """Retourne les produits Al Omrane à plat (pour analytics et rétrocompat)."""
     conn = sqlite3.connect(DB_PATH)
     query = """
         SELECT
@@ -154,14 +181,11 @@ def filtrer_produits(**filters):
             p.localisation AS ville,
             p.region,
             p.type_bien,
-            p.badge,
             p.url AS url_projet,
             l.lot_titre AS lot,
             pr.no_produit AS produit,
             pr.surface,
             pr.prix,
-            pr.etage,
-            pr.designation,
             pr.url AS url_produit,
             ROUND(
                 CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) /
@@ -172,7 +196,7 @@ def filtrer_produits(**filters):
         FROM produits pr
         JOIN lots l ON l.id = pr.lot_id
         JOIN projets p ON p.id = l.projet_id
-        WHERE 1=1
+        WHERE CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) > 0
     """
     params = []
     if filters.get('budget_min') is not None:
@@ -185,14 +209,14 @@ def filtrer_produits(**filters):
         query += " AND p.localisation = ?"
         params.append(filters['ville'])
     if filters.get('type_bien'):
-        query += " AND p.type_bien = ?"
-        params.append(filters['type_bien'])
-    if filters.get('badge'):
-        query += " AND p.badge = ?"
-        params.append(filters['badge'])
-    if filters.get('etage'):
-        query += " AND pr.etage = ?"
-        params.append(filters['etage'])
+        from .type_mapping import get_brut_types_for_normalized
+        brut_list = get_brut_types_for_normalized(filters['type_bien'])
+        if brut_list:
+            placeholders = ','.join(['?'] * len(brut_list))
+            query += f" AND p.type_bien IN ({placeholders})"
+            params.extend(brut_list)
+        else:
+            query += " AND 1=0"
     if filters.get('prix_m2_min') is not None:
         query += " AND prix_m2 >= ?"
         params.append(filters['prix_m2_min'])
@@ -218,7 +242,6 @@ def filtrer_produits(**filters):
 
 
 def get_filtered_data(source='all', **filters):
-    """Rétrocompatibilité : DataFrame unifié pour gui.py et scripts."""
     dfs = []
     if source in ('all', 'alomrane'):
         rows = filtrer_produits(**filters)
@@ -236,7 +259,10 @@ def get_filtered_data(source='all', **filters):
             }, inplace=True)
             df_s['source'] = 'Sarouty'
             df_s['surface'] = df_s['surface'].astype(str) + ' m²'
-            df_s['prix'] = df_s['prix'].astype(str) + ' DH'
+            if 'prix_affichage' in df_s.columns:
+                df_s['prix'] = df_s['prix_affichage']
+            else:
+                df_s['prix'] = df_s['prix'].astype(str) + ' DH'
             dfs.append(df_s)
     if source in ('all', 'mubawab'):
         mubawab = filtrer_mubawab(**filters)
@@ -250,7 +276,10 @@ def get_filtered_data(source='all', **filters):
             }, inplace=True)
             df_m['source'] = 'Mubawab'
             df_m['surface'] = df_m['surface'].astype(str) + ' m²'
-            df_m['prix'] = df_m['prix'].astype(str) + ' DH'
+            if 'prix_affichage' in df_m.columns:
+                df_m['prix'] = df_m['prix_affichage']
+            else:
+                df_m['prix'] = df_m['prix'].astype(str) + ' DH'
             dfs.append(df_m)
     if not dfs:
         return pd.DataFrame()
@@ -266,5 +295,5 @@ def get_statistiques_globales_wrapper():
     return get_statistiques_globales()
 
 
-def get_prix_m2_moyen_par_groupe(ville=None, type_bien=None, etage=None):
-    return get_prix_m2_stats(ville, type_bien, etage)
+def get_prix_m2_moyen_par_groupe(ville=None, type_bien=None):
+    return get_prix_m2_stats(ville, type_bien)

@@ -31,10 +31,6 @@ function initFilters() {
 
 function onSourceChange() {
     const source = document.getElementById('source').value;
-    const showAo = source === 'all' || source === 'alomrane';
-    document.querySelectorAll('.alomrane-only').forEach(el => {
-        el.classList.toggle('hidden-filter', !showAo);
-    });
     updateOptions(source);
     if (source === 'sarouty') setActiveTab('sarouty');
     else if (source === 'alomrane') setActiveTab('alomrane');
@@ -56,8 +52,6 @@ async function loadStats() {
         const data = await fetchJSON('/api/stats');
         renderStats(data);
         populateRegions(data.regions || []);
-        populateSelect('badge', data.badges || []);
-        populateSelect('etage', data.etages || []);
         updateOptions('all');
     } catch (err) {
         document.getElementById('stats-cards').innerHTML =
@@ -89,18 +83,6 @@ function populateRegions(regions) {
         const opt = document.createElement('option');
         opt.value = r.id;
         opt.textContent = r.nom;
-        sel.appendChild(opt);
-    });
-}
-
-function populateSelect(id, items) {
-    const sel = document.getElementById(id);
-    const existing = new Set([...sel.options].map(o => o.value));
-    items.forEach(item => {
-        if (!item || existing.has(item)) return;
-        const opt = document.createElement('option');
-        opt.value = item;
-        opt.textContent = item;
         sel.appendChild(opt);
     });
 }
@@ -199,7 +181,7 @@ async function search() {
 }
 
 function resetFilters() {
-    ['budget_min', 'budget_max', 'ville', 'type_bien', 'badge', 'etage',
+    ['budget_min', 'budget_max', 'ville', 'type_bien',
      'surface_min', 'surface_max', 'prix_m2_min', 'prix_m2_max'].forEach(id => {
         document.getElementById(id).value = '';
     });
@@ -291,4 +273,17 @@ async function scrapeMubawab() {
     } finally {
         btn.disabled = false;
     }
+}
+
+function buildFilterParams() {
+    const params = new URLSearchParams();
+    const fields = [
+        'source', 'budget_min', 'budget_max', 'ville', 'type_bien',
+        'surface_min', 'surface_max', 'prix_m2_min', 'prix_m2_max',
+    ];
+    fields.forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.value) params.append(id, el.value);
+    });
+    return params;
 }

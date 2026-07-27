@@ -37,10 +37,26 @@ def parse_surface(surface_val):
 
 
 def extraire_ville(localisation, region_key=None):
-    if localisation:
-        parts = [p.strip() for p in localisation.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
+    """
+    Extrait la ville depuis la localisation brute.
+    - Si ' à ' est présent (ex: "Riyad à Rabat"), on prend la partie APRÈS le dernier ' à '.
+    - Sinon, on prend la dernière partie après la virgule.
+    - Fallback : nom de la région passée en paramètre.
+    """
+    if not localisation:
+        if region_key and region_key in MUBAWAB_REGIONS:
+            return MUBAWAB_REGIONS[region_key]["nom"]
+        return None
+
+    if " à " in localisation:
+        parts = localisation.split(" à ")
+        if len(parts) > 1:
+            return parts[-1].strip()
+
+    parts = [p.strip() for p in localisation.split(",") if p.strip()]
+    if parts:
+        return parts[-1]
+
     if region_key and region_key in MUBAWAB_REGIONS:
         return MUBAWAB_REGIONS[region_key]["nom"]
     return None
@@ -69,13 +85,14 @@ async def extract_listing_links(page):
 async def extract_ad_detail(page, url):
     print(f"   🔍 Scraping détail : {url}")
     try:
-        await page.goto(url, timeout=15000)
-        await page.wait_for_selector("h1.searchTitle, h3.orangeTit", timeout=8000)
+        await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+        await page.wait_for_selector("h1.searchTitle, h3.orangeTit", timeout=15000)
         await page.evaluate("window.scrollBy(0, window.innerHeight * 0.3);")
         await random_delay(0.5, 1.5)
         await page.evaluate("window.scrollBy(0, window.innerHeight * 0.2);")
         await random_delay(0.3, 0.8)
-    except Exception:
+    except Exception as e:
+        print(f"   ⚠️ Erreur chargement détail : {e}")
         pass
 
     data = {"url": url}
@@ -92,11 +109,20 @@ async def extract_ad_detail(page, url):
     except Exception:
         data["price"] = None
 
+    location_raw = None
     try:
         loc_elem = await page.query_selector("h3.greyTit")
-        data["location"] = await loc_elem.inner_text() if loc_elem else None
+        if loc_elem:
+            location_raw = await loc_elem.inner_text()
     except Exception:
-        data["location"] = None
+        pass
+
+    location_display = location_raw
+    if location_display and " à " in location_display:
+        location_display = location_display.split(" à ")[0].strip()
+
+    data["location_raw"] = location_raw
+    data["location"] = location_display
 
     surface = None
     try:
@@ -188,10 +214,10 @@ async def extract_ad_detail(page, url):
 
 
 async def get_total_pages(page, base_url):
-    await page.goto(base_url, timeout=20000)
-    await random_delay(1, 2)
+    await page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
+    await random_delay(2, 4)  # Laisser le temps au JS de charger
     try:
-        await page.wait_for_selector("div.listingBox", timeout=15000)
+        await page.wait_for_selector("div.listingBox", timeout=20000)
     except Exception:
         return 1
 
@@ -221,7 +247,7 @@ async def get_total_pages(page, base_url):
     return max_page
 
 
-async def scrape_all_pages(playwright, base_url, max_pages=None, headless=True, region_key=None):
+async def scrape_all_pages(playwright, base_url, max_pages=None, headless=False, region_key=None):
     max_pages = max_pages or MUBAWAB_MAX_PAGES
     browser = await playwright.chromium.launch(
         headless=headless,
@@ -241,13 +267,22 @@ async def scrape_all_pages(playwright, base_url, max_pages=None, headless=True, 
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
         },
     )
     page = await context.new_page()
+    # Désactiver le timeout par défaut
+    page.set_default_navigation_timeout(60000)
     await page.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr'] });
+        // Supprimer la propriété CDP
+        window.chrome = { runtime: {} };
     """)
 
     total_pages = await get_total_pages(page, base_url)
@@ -261,10 +296,10 @@ async def scrape_all_pages(playwright, base_url, max_pages=None, headless=True, 
     for page_num in pages_to_scrape:
         current_url = base_url + f":p:{page_num}"
         print(f"\n📄 Page {page_num} : {current_url}")
-        await page.goto(current_url, timeout=20000)
-        await random_delay(1.5, 3)
+        await page.goto(current_url, timeout=60000, wait_until="domcontentloaded")
+        await random_delay(2, 4)
         try:
-            await page.wait_for_selector("div.listingBox", timeout=10000)
+            await page.wait_for_selector("div.listingBox", timeout=15000)
         except Exception:
             print(f"   ⚠️ Aucune annonce sur la page {page_num}")
             break
@@ -277,6 +312,10 @@ async def scrape_all_pages(playwright, base_url, max_pages=None, headless=True, 
                 continue
             ad_data = await extract_ad_detail(page, link)
             if ad_data and ad_data.get("title"):
+                location_raw = ad_data.get("location_raw")
+                location_display = ad_data.get("location")
+                ville = extraire_ville(location_raw, region_key)
+
                 all_ads.append({
                     "url_annonce": ad_data.get("url"),
                     "titre": ad_data.get("title"),
@@ -284,8 +323,8 @@ async def scrape_all_pages(playwright, base_url, max_pages=None, headless=True, 
                     "prix": parse_prix(ad_data.get("price")),
                     "superficie": parse_surface(ad_data.get("surface")),
                     "type_bien": ad_data.get("type_bien"),
-                    "localisation": ad_data.get("location"),
-                    "ville": extraire_ville(ad_data.get("location"), region_key),
+                    "localisation": location_display,
+                    "ville": ville,
                     "region": region_nom,
                 })
                 seen_urls.add(link)
@@ -331,10 +370,14 @@ async def scraper_mubawab(region="rabat", max_pages=None, headless=None):
 
 def scraper_mubawab_sync(region="rabat", max_pages=None, headless=None):
     """Wrapper synchrone pour l'API Flask."""
+    # S'assurer que headless est True par défaut
+    if headless is None:
+        headless = MUBAWAB_HEADLESS
     return asyncio.run(scraper_mubawab(region=region, max_pages=max_pages, headless=headless))
 
 
 async def main():
+    # Test avec headless=True
     nb = await scraper_mubawab(region="rabat", headless=False)
     print(f"\n✅ Scraping terminé. {nb} nouvelles annonces.")
 

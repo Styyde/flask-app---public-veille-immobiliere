@@ -91,7 +91,7 @@ function renderOpportunities(opportunites) {
             <div>
                 <div class="opp-title">${fmt(o.titre)}</div>
                 <div class="opp-meta">
-                    ${fmt(o.localisation)} · ${fmt(o.type_bien)} · ${fmt(o.etage)}
+                    ${fmt(o.localisation)} · ${fmt(o.type_bien)}
                     ${o.est_opportunite ? ' <span class="opp-badge">Forte valeur</span>' : ''}
                 </div>
                 <div class="opp-meta">Lot ${fmt(o.lot_titre)} — Produit ${fmt(o.no_produit)}</div>

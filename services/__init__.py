@@ -10,7 +10,7 @@ from .filter_service import (
     get_statistiques_globales_wrapper,
     get_prix_m2_moyen_par_groupe,
 )
-from .stats_service import get_stats_distribution
+from .listings_service import get_all_listings
 from .analysis_service import get_analytics_dashboard, analyser_opportunites
 
 __all__ = [
@@ -23,7 +23,7 @@ __all__ = [
     "parse_filtres_from_request",
     "get_statistiques_globales_wrapper",
     "get_prix_m2_moyen_par_groupe",
-    "get_stats_distribution",
+    "get_all_listings",
     "get_analytics_dashboard",
     "analyser_opportunites",
 ]

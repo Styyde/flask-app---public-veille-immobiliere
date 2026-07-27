@@ -12,6 +12,7 @@ from database.db_manager import get_projet_detail, get_statistiques_globales, in
 from services.filter_service import (
     parse_filtres_from_request,
     filtrer_alomrane,
+    filtrer_produits,      # <-- Ajouté pour la nouvelle route
     filtrer_sarouty,
     filtrer_mubawab,
     get_filtres_disponibles,
@@ -54,6 +55,18 @@ def alomrane_projets():
     try:
         filtres = parse_filtres_from_request(request.args)
         data = filtrer_alomrane(**filtres)
+        return jsonify(data)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/alomrane/produits', methods=['GET'])
+def alomrane_produits():
+    """Nouvelle route : retourne les produits Al Omrane à plat (un produit par ligne)."""
+    try:
+        filtres = parse_filtres_from_request(request.args)
+        data = filtrer_produits(**filtres)
         return jsonify(data)
     except Exception as e:
         traceback.print_exc()
@@ -113,7 +126,6 @@ def moyennes():
         data = get_prix_m2_moyen_par_groupe(
             ville=request.args.get('ville'),
             type_bien=request.args.get('type_bien'),
-            etage=request.args.get('etage'),
         )
         return jsonify(data)
     except Exception as e:
@@ -168,7 +180,6 @@ def scraper():
             'titre': p['titre'],
             'localisation': p['localisation'],
             'type_bien': p['type_bien'],
-            'badge': p['badge'],
         } for p in projets],
     })
 

@@ -131,8 +131,9 @@ async function search() {
     if (loadAo) {
         const p = new URLSearchParams(params);
         p.delete('source');
+        // On appelle la nouvelle route /api/alomrane/produits pour avoir les produits à plat
         promises.push(
-            fetchJSON(`/api/alomrane/projets?${p}`).then(renderAlomrane).catch(e => {
+            fetchJSON(`/api/alomrane/produits?${p}`).then(renderAlomrane).catch(e => {
                 document.getElementById('alomrane-list').innerHTML =
                     `<div class="yt-error">${e.message}</div>`;
             })

@@ -1,5 +1,4 @@
-const expandedProjects = new Set();
-const expandedLots = new Set();
+// tables.js – Version simplifiée : Al Omrane en table unique (produits à plat)
 
 function renderSarouty(rows) {
     const tbody = document.getElementById('tbody-sarouty');
@@ -74,58 +73,58 @@ function escapeAttr(str) {
         .replace(/</g, '&lt;');
 }
 
-/* ==================== AL OMRANE – TABLE WITH HIERARCHY ==================== */
+/* ==================== AL OMRANE – TABLE UNIQUE (PRODUITS À PLAT) ==================== */
 
 function renderAlomrane(rows) {
     const container = document.getElementById('alomrane-list');
     document.getElementById('count-ao').textContent = rows.length;
 
     if (!rows.length) {
-        container.innerHTML = '<div class="empty-state">Aucun projet Al Omrane pour ces filtres</div>';
+        container.innerHTML = '<div class="empty-state">Aucun produit Al Omrane pour ces filtres</div>';
         return;
     }
 
     let html = `
         <div class="table-wrap">
-            <table class="data-table clickable" id="table-alomrane">
+            <table class="data-table" id="table-alomrane">
                 <thead>
                     <tr>
                         <th>Projet</th>
                         <th>Localisation</th>
-                        <th>Type</th>
+                        <th>Lot</th>
+                        <th>Produit</th>
                         <th>Surface</th>
                         <th>Prix</th>
                         <th>Prix/m²</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody id="tbody-alomrane">
+                <tbody>
     `;
 
-    rows.forEach(p => {
-        const isOpen = expandedProjects.has(p.id);
+    rows.forEach(row => {
+        const projet = fmt(row.projet);
+        const localisation = fmt(row.ville);
+        const lot = fmt(row.lot);
+        const produit = fmt(row.produit);
+        const surface = formatSurface(row.surface);
+        const prix = formatPrix(row.prix);
+        const prix_m2 = formatPrixM2(row.prix_m2);
+        const url = row.url_produit || row.url_projet;
+
         html += `
-            <tr class="project-row ${isOpen ? 'expanded' : ''}" data-project-id="${p.id}">
-                <td><strong>${fmt(p.titre)}</strong></td>
-                <td>${fmt(p.localisation)}</td>
-                <td>${fmt(p.type_bien)}</td>
-                <td>—</td>
-                <td>—</td>
-                <td class="prix-m2">${formatPrixM2Range(p.prix_m2_min, p.prix_m2_max)}</td>
+            <tr>
+                <td><strong>${projet}</strong></td>
+                <td>${localisation}</td>
+                <td>${lot}</td>
+                <td>${produit}</td>
+                <td>${surface}</td>
+                <td>${prix}</td>
+                <td class="prix-m2">${prix_m2}</td>
                 <td>
-                    ${p.url
-                        ? `<button class="btn btn-sm btn-consult" data-url="${escapeAttr(p.url)}">Accéder</button>`
+                    ${url
+                        ? `<button class="btn btn-sm btn-consult" data-url="${escapeAttr(url)}">Accéder</button>`
                         : '—'}
-                    <button class="btn btn-sm btn-detail" data-id="${p.id}">
-                        ${isOpen ? 'Masquer' : 'Détails'}
-                    </button>
-                </td>
-            </tr>
-            <tr class="detail-row" id="detail-row-${p.id}" style="display:${isOpen ? 'table-row' : 'none'}">
-                <td colspan="7">
-                    <div class="detail-panel" id="detail-panel-${p.id}">
-                        ${isOpen ? '<div class="yt-loading">Chargement des lots…</div>' : ''}
-                    </div>
                 </td>
             </tr>
         `;
@@ -139,27 +138,22 @@ function renderAlomrane(rows) {
 
     container.innerHTML = html;
 
-    container.querySelectorAll('.btn-detail').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const projectId = parseInt(btn.dataset.id, 10);
-            toggleProject(projectId);
-        });
-    });
-
     container.querySelectorAll('.btn-consult').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             openUrl(btn.dataset.url);
         });
     });
-
-    expandedProjects.forEach(id => {
-        if (rows.some(r => r.id === id)) {
-            loadProjectDetail(id);
-        }
-    });
 }
+
+// =====================================================
+// Anciennes fonctions d'expansion (conservées commentées pour référence)
+// Elles ne sont plus utilisées avec la nouvelle version.
+// =====================================================
+
+/*
+const expandedProjects = new Set();
+const expandedLots = new Set();
 
 async function toggleProject(id) {
     const row = document.querySelector(`tr.project-row[data-project-id="${id}"]`);
@@ -184,11 +178,8 @@ async function toggleProject(id) {
 async function loadProjectDetail(id) {
     const panel = document.getElementById(`detail-panel-${id}`);
     if (!panel) return;
-
     if (panel.dataset.loaded === 'true') return;
-
     panel.innerHTML = '<div class="yt-loading">Chargement des lots…</div>';
-
     try {
         const projet = await fetchJSON(`/api/alomrane/projets/${id}`);
         panel.innerHTML = renderHierarchyHTML(projet);
@@ -218,7 +209,6 @@ function bindLotToggles(panel, projetId) {
             const body = panel.querySelector(`#lot-body-${projetId}-${lotId}`);
             const chevron = header.querySelector('.yt-chevron');
             if (!body) return;
-
             if (expandedLots.has(key)) {
                 expandedLots.delete(key);
                 body.style.display = 'none';
@@ -238,7 +228,6 @@ function renderHierarchyHTML(projet) {
     if (!projet.lots || !projet.lots.length) {
         return '<div class="empty-state">Aucun lot disponible</div>';
     }
-
     return `
     <div class="yt-hierarchy">
         <div class="yt-breadcrumb">Projet <span>›</span> Lots <span>›</span> Produits</div>
@@ -301,3 +290,4 @@ function renderProduitsTable(produits, projet) {
         </table>
     </div>`;
 }
+*/

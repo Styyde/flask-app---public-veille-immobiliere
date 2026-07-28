@@ -114,8 +114,6 @@ def scraper_sarouty(max_pages=MAX_PAGES, region_ids=None, category='1'):
                 "description": prop.get("property_text_fr") or "",
                 "prix": (prop.get("price") or {}).get("price") or (item.get("price") or {}).get("price") or 0,
                 "superficie": prop.get("property_sqft") or item.get("property_sqft") or 0,
-                "chambres": prop.get("total_bedroom") or item.get("total_bedroom"),
-                "salles_de_bain": prop.get("total_bathroom") or item.get("total_bathroom"),
                 "type_bien": prop.get("property_housing_type") or item.get("property_housing_type"),
                 "quartier": quartier_brut,  # nom brut du quartier (peut contenir la ville entre parenthèses)
                 "ville": ville              # ville nettoyée (ex: "Rabat Sale")

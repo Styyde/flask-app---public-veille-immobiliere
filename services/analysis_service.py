@@ -1,166 +1,166 @@
 # services/analysis_service.py
-import sqlite3
-import pandas as pd
+import logging
 import statistics
 import re
-from config import DB_PATH
-from .filter_service import filtrer_sarouty, filtrer_mubawab
-from .type_mapping import get_normalized_type, get_brut_types_for_normalized
-from analytics.scorer import identifier_opportunites
+from collections import defaultdict
+
+from .filter_service import filtrer_produits, filtrer_sarouty, filtrer_mubawab
+from .type_mapping import get_normalized_type
+from analytics.scorer import calculer_opportunites_sur_donnees
+
+logger = logging.getLogger(__name__)
+
+
+def _clean_float(val):
+    """
+    Nettoie une valeur pour la convertir en float.
+    Gère les chaînes avec espaces, virgules, unités (DH, m², etc.).
+    """
+    if val is None:
+        return None
+    try:
+        # Si c'est déjà un nombre, on le retourne
+        if isinstance(val, (int, float)):
+            return float(val)
+        # Sinon, on nettoie la chaîne
+        cleaned = re.sub(r'[^\d.]', '', str(val))
+        return float(cleaned) if cleaned else None
+    except (ValueError, TypeError):
+        return None
 
 
 def get_analytics_dashboard(filtres=None):
     if filtres is None:
         filtres = {}
 
-    type_filter = filtres.get('type_bien')
-    ville_filter = filtres.get('ville')
+    logger.debug(f"Filtres reçus (bruts) : {filtres}")
 
-    # ---- RÉCUPÉRATION AL OMRANE PAR SQL DIRECT ----
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    # Nettoyage des filtres quantitatifs
+    budget_min = _clean_float(filtres.get('budget_min'))
+    budget_max = _clean_float(filtres.get('budget_max'))
+    surface_min = _clean_float(filtres.get('surface_min'))
+    surface_max = _clean_float(filtres.get('surface_max'))
+    prix_m2_min = _clean_float(filtres.get('prix_m2_min'))
+    prix_m2_max = _clean_float(filtres.get('prix_m2_max'))
 
-    brut_types = []
-    if type_filter:
-        brut_types = get_brut_types_for_normalized(type_filter)
-        if not brut_types:
-            brut_types = ['__NO_MATCH__']
+    logger.debug(
+        f"Filtres quantitatifs nettoyés : budget_min={budget_min}, budget_max={budget_max}, "
+        f"surface_min={surface_min}, surface_max={surface_max}, "
+        f"prix_m2_min={prix_m2_min}, prix_m2_max={prix_m2_max}"
+    )
 
-    query = """
-        SELECT
-            p.titre AS projet,
-            p.localisation AS ville,
-            p.type_bien,
-            l.lot_titre AS lot,
-            pr.no_produit AS produit,
-            pr.surface,
-            pr.prix,
-            p.url AS url_projet,
-            pr.url AS url_produit
-        FROM produits pr
-        JOIN lots l ON l.id = pr.lot_id
-        JOIN projets p ON p.id = l.projet_id
-        WHERE 1=1
-    """
-    params = []
-    if brut_types:
-        placeholders = ','.join(['?'] * len(brut_types))
-        query += f" AND p.type_bien IN ({placeholders})"
-        params.extend(brut_types)
-    if ville_filter:
-        query += " AND p.localisation = ?"
-        params.append(ville_filter)
+    # 1. Récupération via les services de filtrage
+    produits_alomrane = filtrer_produits(**filtres)
+    annonces_sarouty = filtrer_sarouty(**filtres)
+    annonces_mubawab = filtrer_mubawab(**filtres)
 
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
+    valid_data = []
 
-    # ---- CONSTRUCTION DE LA LISTE UNIFIÉE ----
-    all_data = []
-
-    # Al Omrane
-    for row in rows:
-        surface_str = row[5]
-        if isinstance(surface_str, str):
-            surf = re.sub(r'[^\d.]', '', surface_str)
-            try:
-                surface = float(surf)
-            except ValueError:
-                surface = 0
-        else:
-            surface = float(surface_str) if surface_str else 0
-
-        prix_str = row[6]
-        if isinstance(prix_str, str):
-            prix = float(re.sub(r'[^\d.]', '', prix_str))
-        else:
-            prix = float(prix_str) if prix_str else 0
-
-        if surface <= 0 or prix <= 0:
+    # 2. Normalisation et unification
+    for p in produits_alomrane:
+        prix = _clean_float(p.get('prix'))
+        surface = _clean_float(p.get('surface'))
+        if prix is None or surface is None or surface == 0:
             continue
-
-        prix_m2 = round(prix / surface, 2)
-        type_norm = get_normalized_type(row[2])
-
-        all_data.append({
+        type_norm = get_normalized_type(p.get('type_bien'))
+        ville = p.get('ville') or p.get('localisation') or 'Inconnue'
+        valid_data.append({
             'source': 'Al Omrane',
-            'titre': row[0],
-            'ville': row[1],
-            'localisation': row[1],
+            'titre': p.get('projet'),
             'type_bien': type_norm,
-            'surface': surface,
+            'ville': ville,
+            'localisation': ville,
             'prix': prix,
-            'prix_m2': prix_m2,
-            'url': row[7] or row[8],
-            'lot': row[3],
-            'no_produit': row[4],
+            'surface': surface,
+            'prix_m2': round(prix / surface, 2),
+            'url': p.get('url_projet'),
+            'lot': p.get('lot'),
+            'no_produit': p.get('produit'),
         })
 
-    # ---- SAROUTY ----
-    sarouty_data = filtrer_sarouty(**filtres)
-    for s in sarouty_data:
-        surface = float(s.get('surface')) if s.get('surface') else 0
-        prix = s.get('prix')
-        if prix is None:
+    for a in annonces_sarouty:
+        prix = _clean_float(a.get('prix'))
+        surface = _clean_float(a.get('surface'))
+        if prix is None or surface is None or surface == 0:
             continue
-        try:
-            prix = float(prix)
-        except (TypeError, ValueError):
-            continue
-        if surface <= 0 or prix <= 0:
-            continue
-        type_norm = get_normalized_type(s.get('type'))
-        all_data.append({
+        type_norm = get_normalized_type(a.get('type'))
+        ville = a.get('localisation') or a.get('ville') or 'Inconnue'
+        valid_data.append({
             'source': 'Sarouty',
-            'titre': s.get('projet'),
-            'ville': s.get('localisation'),
-            'localisation': s.get('localisation'),
+            'titre': a.get('projet'),
             'type_bien': type_norm,
-            'surface': surface,
+            'ville': ville,
+            'localisation': ville,
             'prix': prix,
-            'prix_m2': s.get('prix_m2') or round(prix / surface, 2),
-            'url': s.get('url_annonce'),
+            'surface': surface,
+            'prix_m2': round(prix / surface, 2),
+            'url': a.get('url_annonce'),
             'lot': None,
             'no_produit': None,
         })
 
-    # ---- MUBAWAB ----
-    mubawab_data = filtrer_mubawab(**filtres)
-    for m in mubawab_data:
-        surface = float(m.get('surface')) if m.get('surface') else 0
-        prix = m.get('prix')
-        if prix is None:
+    for a in annonces_mubawab:
+        prix = _clean_float(a.get('prix'))
+        surface = _clean_float(a.get('surface'))
+        if prix is None or surface is None or surface == 0:
             continue
-        try:
-            prix = float(prix)
-        except (TypeError, ValueError):
-            continue
-        if surface <= 0 or prix <= 0:
-            continue
-        type_norm = get_normalized_type(m.get('type'))
-        all_data.append({
+        type_norm = get_normalized_type(a.get('type'))
+        ville = a.get('localisation') or a.get('ville') or 'Inconnue'
+        valid_data.append({
             'source': 'Mubawab',
-            'titre': m.get('projet'),
-            'ville': m.get('localisation'),
-            'localisation': m.get('localisation'),
+            'titre': a.get('projet'),
             'type_bien': type_norm,
-            'surface': surface,
+            'ville': ville,
+            'localisation': ville,
             'prix': prix,
-            'prix_m2': m.get('prix_m2') or round(prix / surface, 2),
-            'url': m.get('url_annonce'),
+            'surface': surface,
+            'prix_m2': round(prix / surface, 2),
+            'url': a.get('url_annonce'),
             'lot': None,
             'no_produit': None,
         })
 
-    # ---- FILTRAGE SUPPLÉMENTAIRE (ville) ----
+    logger.debug(f"Données brutes avant filtrage quantitatif : {len(valid_data)}")
+
+    # 3. Filtrage par ville (déjà fait dans les services, mais on sécurise)
+    ville_filter = filtres.get('ville')
     if ville_filter:
-        all_data = [d for d in all_data if ville_filter.lower() in (d.get('ville') or '').lower()
-                    or ville_filter.lower() in (d.get('localisation') or '').lower()]
+        before = len(valid_data)
+        valid_data = [d for d in valid_data if ville_filter.lower() in (d.get('ville') or '').lower()
+                      or ville_filter.lower() in (d.get('localisation') or '').lower()]
+        logger.debug(f"Filtrage ville '{ville_filter}' : {before} -> {len(valid_data)}")
 
-    # ---- GARDER UNIQUEMENT LES DONNÉES VALIDES ----
-    valid = [d for d in all_data if d.get('prix_m2') and d['prix_m2'] > 0]
+    # 4. Filtrage quantitatif en mémoire (budget, surface, prix/m²)
+    if budget_min is not None:
+        before = len(valid_data)
+        valid_data = [d for d in valid_data if d['prix'] >= budget_min]
+        logger.debug(f"Filtrage budget_min >= {budget_min} : {before} -> {len(valid_data)}")
+    if budget_max is not None:
+        before = len(valid_data)
+        valid_data = [d for d in valid_data if d['prix'] <= budget_max]
+        logger.debug(f"Filtrage budget_max <= {budget_max} : {before} -> {len(valid_data)}")
+    if surface_min is not None:
+        before = len(valid_data)
+        valid_data = [d for d in valid_data if d['surface'] >= surface_min]
+        logger.debug(f"Filtrage surface_min >= {surface_min} : {before} -> {len(valid_data)}")
+    if surface_max is not None:
+        before = len(valid_data)
+        valid_data = [d for d in valid_data if d['surface'] <= surface_max]
+        logger.debug(f"Filtrage surface_max <= {surface_max} : {before} -> {len(valid_data)}")
+    if prix_m2_min is not None:
+        before = len(valid_data)
+        valid_data = [d for d in valid_data if d['prix_m2'] >= prix_m2_min]
+        logger.debug(f"Filtrage prix_m2_min >= {prix_m2_min} : {before} -> {len(valid_data)}")
+    if prix_m2_max is not None:
+        before = len(valid_data)
+        valid_data = [d for d in valid_data if d['prix_m2'] <= prix_m2_max]
+        logger.debug(f"Filtrage prix_m2_max <= {prix_m2_max} : {before} -> {len(valid_data)}")
 
-    if not valid:
+    # 5. Garder uniquement les entrées avec prix_m2 valide (> 0)
+    valid_data = [d for d in valid_data if d.get('prix_m2') and d['prix_m2'] > 0]
+    logger.debug(f"Données finales après tous les filtres : {len(valid_data)}")
+
+    if not valid_data:
         return {
             'histogram': {'labels': [], 'counts': [], 'seuil_opportunite': 0},
             'comparaison': [],
@@ -170,72 +170,33 @@ def get_analytics_dashboard(filtres=None):
             'opportunites': []
         }
 
-    # ---- HISTOGRAMME ----
-    prix_m2_values = [d['prix_m2'] for d in valid]
-    hist = _get_histogram(prix_m2_values)
+    # 6. Graphiques
+    hist = _get_histogram([d['prix_m2'] for d in valid_data])
+    comparaison_villes = _groupby_and_avg(valid_data, 'ville')
+    distribution_types = _groupby_and_avg(valid_data, 'type_bien')
 
-    # ---- COMPARAISON PAR VILLE ----
-    df = pd.DataFrame(valid)
-    if 'ville' in df.columns:
-        grouped = df.groupby('ville').agg({
-            'prix_m2': ['mean', 'count', 'min', 'max'],
-            'surface': 'mean'
-        }).reset_index()
-        grouped.columns = ['groupe', 'prix_m2_moyen', 'nb_produits', 'prix_min', 'prix_max', 'surface_moyenne']
-        grouped = grouped.sort_values('prix_m2_moyen')
-        comparaison = grouped.to_dict(orient='records')
-    else:
-        comparaison = []
-
-    # ---- DISTRIBUTION PAR TYPE ----
-    if 'type_bien' in df.columns:
-        type_dist = df.groupby('type_bien')['prix_m2'].agg(['mean', 'count']).reset_index()
-        type_dist.columns = ['groupe', 'prix_m2_moyen', 'nb_produits']
-        type_dist = type_dist.sort_values('prix_m2_moyen').to_dict(orient='records')
-    else:
-        type_dist = []
-
-    # ---- OPPORTUNITÉS ----
-    opportunites = identifier_opportunites()
-
-    # Filtrer les opportunités par type et ville
-    if ville_filter:
-        opportunites = [o for o in opportunites if ville_filter.lower() in (o.get('localisation') or '').lower()]
-    if type_filter:
-        opportunites = [o for o in opportunites if o.get('type_bien') == type_filter]
-
-    # Si aucune opportunité n'est trouvée, on retourne les 5 biens les moins chers (tous types) en les transformant au format attendu
-    if not opportunites and valid:
-        # Trier les biens valides par prix/m² croissant
-        sorted_valid = sorted(valid, key=lambda x: x['prix_m2'])
-        top5 = sorted_valid[:5]
-        # Transformer en opportunités factices avec est_opportunite = False
-        opportunites = []
-        for item in top5:
-            opportunites.append({
-                'titre': item.get('titre'),
-                'localisation': item.get('localisation'),
-                'type_bien': item.get('type_bien'),
-                'surface': item.get('surface'),
-                'prix': item.get('prix'),
-                'prix_m2': item.get('prix_m2'),
-                'url': item.get('url'),
-                'lot_titre': item.get('lot'),
-                'no_produit': item.get('no_produit'),
-                'est_opportunite': False,
-                'ecart_pourcent': 0,
-                'moyenne_groupe': 0,
-            })
+    # 7. Opportunités
+    opportunites = calculer_opportunites_sur_donnees(valid_data)
+    opportunites = opportunites[:20] if len(opportunites) > 20 else opportunites
 
     return {
         'histogram': hist,
-        'comparaison': comparaison[:15],
-        'distribution_types': type_dist,
+        'comparaison': comparaison_villes,
+        'distribution_types': distribution_types,
         'distribution_etages': [],
         'ville_etage': [],
-        'opportunites': opportunites[:10]
+        'opportunites': opportunites
     }
 
+
+def analyser_opportunites(filtres=None):
+    if filtres is None:
+        filtres = {}
+    dashboard = get_analytics_dashboard(filtres)
+    return {'opportunites': dashboard.get('opportunites', [])}
+
+
+# ---- Fonctions utilitaires ----
 
 def _get_histogram(values, bins=10):
     if not values:
@@ -259,12 +220,19 @@ def _get_histogram(values, bins=10):
     return {'labels': labels, 'counts': counts, 'seuil_opportunite': round(seuil, 2)}
 
 
-def analyser_opportunites(filtres=None):
-    if filtres is None:
-        filtres = {}
-    opportunites = identifier_opportunites()
-    if filtres.get('ville'):
-        opportunites = [o for o in opportunites if filtres['ville'].lower() in (o.get('localisation') or '').lower()]
-    if filtres.get('type_bien'):
-        opportunites = [o for o in opportunites if o.get('type_bien') == filtres['type_bien']]
-    return {'opportunites': opportunites[:10]}
+def _groupby_and_avg(data, key):
+    grouped = defaultdict(list)
+    for item in data:
+        if item.get(key):
+            grouped[item[key]].append(item['prix_m2'])
+    result = []
+    for k, v in grouped.items():
+        result.append({
+            'groupe': k,
+            'prix_m2_moyen': round(sum(v) / len(v), 2),
+            'nb_produits': len(v),
+            'prix_min': min(v),
+            'prix_max': max(v),
+            'surface_moyenne': 0
+        })
+    return sorted(result, key=lambda x: x['prix_m2_moyen'])

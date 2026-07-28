@@ -1,3 +1,4 @@
+// static/js/charts.js
 let histogramChart = null;
 let comparisonChart = null;
 
@@ -80,30 +81,63 @@ function renderOpportunities(opportunites) {
     const container = document.getElementById('opportunities-list');
     if (!container) return;
 
-    if (!opportunites || !opportunites.length) {
-        container.innerHTML = '<p style="color:#7f8c8d">Aucune opportunité détectée pour le moment.</p>';
+    // 1. Cas sans aucune donnée pour ces filtres
+    if (!opportunites || opportunites.length === 0) {
+        container.innerHTML = `
+            <div style="padding: 25px 15px; text-align: center; color: #7f8c8d; background: #f8f9fa; border-radius: 8px; border: 1px dashed #bdc3c7;">
+                <p style="margin: 0; font-weight: 600; font-size: 1.05em; color: #2c3e50;">Aucun bien ne correspond à ces filtres.</p>
+                <p style="margin: 6px 0 0 0; font-size: 0.9em;">Essayez d'élargir vos critères de recherche (ville, type, budget, source).</p>
+            </div>`;
         return;
     }
 
-    container.innerHTML = opportunites.map(o => `
+    // 2. Vérification de la présence d'opportunités à forte valeur
+    const hasRealOpportunities = opportunites.some(o => o.est_opportunite);
+    let html = '';
+
+    if (!hasRealOpportunities) {
+        html += `
+            <div style="margin-bottom: 15px; padding: 12px 15px; background-color: #fff3cd; color: #856404; border-radius: 6px; font-size: 0.9em; border-left: 4px solid #ffeeba;">
+                <strong>Aucune opportunité forte détectée (seuil > 15%).</strong><br>
+                Voici les biens affichant les meilleurs prix/m² pour le sous-ensemble sélectionné :
+            </div>
+        `;
+    }
+
+    // 3. Construction des cartes
+    html += opportunites.map(o => `
         <div class="opp-card ${o.est_opportunite ? 'hot' : ''}"
-             ${o.url ? `style="cursor:pointer" data-url="${o.url}"` : ''}>
+             ${o.url ? `style="cursor:pointer" data-url="${escapeAttr(o.url)}"` : ''}>
             <div>
                 <div class="opp-title">${fmt(o.titre)}</div>
                 <div class="opp-meta">
                     ${fmt(o.localisation)} · ${fmt(o.type_bien)}
-                    ${o.est_opportunite ? ' <span class="opp-badge">Forte valeur</span>' : ''}
+                    ${o.est_opportunite ? ' <span class="opp-badge" style="background:#e74c3c; color:white; padding:2px 6px; border-radius:4px; font-size:0.8em; margin-left:5px; font-weight:bold;">🔥 Forte valeur</span>' : ''}
                 </div>
-                <div class="opp-meta">Lot ${fmt(o.lot_titre)} — Produit ${fmt(o.no_produit)}</div>
+                <div class="opp-meta">
+                    ${o.source ? `<span style="color:#34495e; font-weight:600;">[${fmt(o.source)}]</span> ` : ''}
+                    ${o.lot_titre || o.lot ? `Lot ${fmt(o.lot_titre || o.lot)} ` : ''}
+                    ${o.no_produit ? `— Produit ${fmt(o.no_produit)}` : ''}
+                </div>
             </div>
-            <div class="opp-price">
-                ${formatPrixM2(o.prix_m2)}
-                <div class="opp-meta">${o.ecart_pourcent != null ? o.ecart_pourcent + '% vs moyenne' : ''}</div>
+            <div class="opp-price" style="text-align:right;">
+                <strong style="display:block; font-size: 1.1em; color: #2c3e50;">${formatPrixM2(o.prix_m2)}</strong>
+                <span style="font-size: 0.85em; font-weight: 500; color: ${o.ecart_pourcent < 0 ? '#27ae60' : '#e74c3c'};">
+                    ${o.ecart_pourcent != null ? (o.ecart_pourcent > 0 ? '+' : '') + o.ecart_pourcent + '% vs moyenne' : ''}
+                </span>
             </div>
         </div>
     `).join('');
 
+    container.innerHTML = html;
+
     container.querySelectorAll('[data-url]').forEach(el => {
-        el.addEventListener('click', () => openUrl(el.dataset.url));
+        el.addEventListener('click', () => {
+            if (typeof openUrl === 'function') {
+                openUrl(el.dataset.url);
+            } else {
+                window.open(el.dataset.url, '_blank');
+            }
+        });
     });
 }

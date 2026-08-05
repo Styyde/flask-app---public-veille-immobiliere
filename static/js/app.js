@@ -4,12 +4,27 @@ document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     initFilters();
     loadStats();
+    loadFavoris();
     document.getElementById('btn-search').addEventListener('click', search);
     document.getElementById('btn-reset').addEventListener('click', resetFilters);
     document.getElementById('btn-scrape-ao').addEventListener('click', scrapeAlomrane);
     document.getElementById('btn-scrape-sar').addEventListener('click', scrapeSarouty);
     document.getElementById('btn-scrape-mub').addEventListener('click', scrapeMubawab);
     document.getElementById('source').addEventListener('change', onSourceChange);
+    
+    // Sidebar logic
+    const toggleBtn = document.getElementById('btn-toggle-scrape');
+    const closeBtn = document.getElementById('btn-close-scrape');
+    const sidebar = document.getElementById('scrape-sidebar');
+    const overlay = document.getElementById('scrape-overlay');
+    
+    const openSidebar = () => { sidebar.classList.add('open'); overlay.classList.add('open'); };
+    const closeSidebar = () => { sidebar.classList.remove('open'); overlay.classList.remove('open'); };
+    
+    if(toggleBtn) toggleBtn.addEventListener('click', openSidebar);
+    if(closeBtn) closeBtn.addEventListener('click', closeSidebar);
+    if(overlay) overlay.addEventListener('click', closeSidebar);
+    
     setTimeout(search, 300);
 });
 
@@ -21,6 +36,9 @@ function initTabs() {
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             tab.classList.add('active');
             document.getElementById(`tab-${activeTab}`).classList.add('active');
+            if (activeTab === 'favoris') {
+                loadFavoris();
+            }
         });
     });
 }
@@ -32,6 +50,7 @@ function initFilters() {
 function onSourceChange() {
     const source = document.getElementById('source').value;
     updateOptions(source);
+    if (activeTab === 'favoris') return;
     if (source === 'sarouty') setActiveTab('sarouty');
     else if (source === 'alomrane') setActiveTab('alomrane');
     else if (source === 'mubawab') setActiveTab('mubawab');
@@ -52,6 +71,7 @@ async function loadStats() {
         const data = await fetchJSON('/api/stats');
         renderStats(data);
         populateRegions(data.regions || []);
+        document.getElementById('count-fav').textContent = data.nb_favoris || 0;
         updateOptions('all');
     } catch (err) {
         document.getElementById('stats-cards').innerHTML =
@@ -66,6 +86,7 @@ function renderStats(data) {
         { label: 'Produits', value: data.nb_produits || 0 },
         { label: 'Annonces Sarouty', value: data.nb_sarouty || 0 },
         { label: 'Annonces Mubawab', value: data.nb_mubawab || 0 },
+        { label: '⭐ Favoris', value: data.nb_favoris || 0 },
     ];
     document.getElementById('stats-cards').innerHTML = cards.map(c => `
         <div class="stat-card">
@@ -119,9 +140,13 @@ async function search() {
     document.getElementById('alomrane-list').innerHTML =
         '<div class="yt-loading">Chargement…</div>';
     document.getElementById('tbody-sarouty').innerHTML =
-        '<tr><td colspan="7" class="empty">Chargement…</td></tr>';
+        '<tr><td colspan="8" class="empty">Chargement…</td></tr>';
     document.getElementById('tbody-mubawab').innerHTML =
-        '<tr><td colspan="7" class="empty">Chargement…</td></tr>';
+        '<tr><td colspan="8" class="empty">Chargement…</td></tr>';
+
+    if (typeof refreshFavorisSet === 'function') {
+        await refreshFavorisSet();
+    }
 
     const promises = [];
     const loadAo = source === 'all' || source === 'alomrane';
@@ -131,7 +156,6 @@ async function search() {
     if (loadAo) {
         const p = new URLSearchParams(params);
         p.delete('source');
-        // On appelle la nouvelle route /api/alomrane/produits pour avoir les produits à plat
         promises.push(
             fetchJSON(`/api/alomrane/produits?${p}`).then(renderAlomrane).catch(e => {
                 document.getElementById('alomrane-list').innerHTML =
@@ -150,12 +174,12 @@ async function search() {
         promises.push(
             fetchJSON(`/api/sarouty/annonces?${p}`).then(renderSarouty).catch(e => {
                 document.getElementById('tbody-sarouty').innerHTML =
-                    `<tr><td colspan="7" class="empty" style="color:red">${e.message}</td></tr>`;
+                    `<tr><td colspan="8" class="empty" style="color:red">${e.message}</td></tr>`;
             })
         );
     } else {
         document.getElementById('tbody-sarouty').innerHTML =
-            '<tr><td colspan="7" class="empty">Autre source sélectionnée</td></tr>';
+            '<tr><td colspan="8" class="empty">Autre source sélectionnée</td></tr>';
         document.getElementById('count-sar').textContent = '0';
     }
 
@@ -165,12 +189,12 @@ async function search() {
         promises.push(
             fetchJSON(`/api/mubawab/annonces?${p}`).then(renderMubawab).catch(e => {
                 document.getElementById('tbody-mubawab').innerHTML =
-                    `<tr><td colspan="7" class="empty" style="color:red">${e.message}</td></tr>`;
+                    `<tr><td colspan="8" class="empty" style="color:red">${e.message}</td></tr>`;
             })
         );
     } else {
         document.getElementById('tbody-mubawab').innerHTML =
-            '<tr><td colspan="7" class="empty">Autre source sélectionnée</td></tr>';
+            '<tr><td colspan="8" class="empty">Autre source sélectionnée</td></tr>';
         document.getElementById('count-mub').textContent = '0';
     }
 
@@ -179,9 +203,20 @@ async function search() {
     );
 
     await Promise.all(promises);
+    syncFavorisCount();
+}
+
+function syncFavorisCount() {
+    fetchJSON('/api/favoris').then(data => {
+        document.getElementById('count-fav').textContent = data.length;
+    }).catch(() => {});
 }
 
 function resetFilters() {
+    if (activeTab === 'favoris') {
+        loadFavoris();
+        return;
+    }
     ['budget_min', 'budget_max', 'ville', 'type_bien',
      'surface_min', 'surface_max', 'prix_m2_min', 'prix_m2_max'].forEach(id => {
         document.getElementById(id).value = '';
@@ -284,7 +319,106 @@ function buildFilterParams() {
     ];
     fields.forEach(id => {
         const el = document.getElementById(id);
-        if (el && el.value) params.append(id, el.value);
+        if (el && el.value) {
+            const cleaned = el.value.replace(/\s/g, '').replace(',', '.');
+            params.append(id, cleaned);
+        }
     });
     return params;
 }
+
+// ---------- FAVORIS ----------
+
+async function loadFavoris() {
+    try {
+        const data = await fetchJSON('/api/favoris');
+        renderFavoris(data);
+        document.getElementById('count-fav').textContent = data.length;
+        if (typeof refreshFavorisSet === 'function') {
+            favorisSet = new Set(data.map(f => `${f.source}:${String(f.annonce_id)}`));
+        }
+    } catch (err) {
+        document.getElementById('tbody-favoris').innerHTML =
+            `<tr><td colspan="8" class="empty" style="color:red">Erreur : ${err.message}</td></tr>`;
+    }
+}
+
+function renderFavoris(rows) {
+    const tbody = document.getElementById('tbody-favoris');
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">Aucun favori — utilisez ⭐ Ajouter sur une annonce</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = rows.map(row => `
+        <tr>
+            <td>${fmt(row.source)}</td>
+            <td><strong>${fmt(row.titre)}</strong></td>
+            <td>${fmt(row.localisation)}</td>
+            <td>${fmt(row.type_bien)}</td>
+            <td>${formatSurface(row.surface)}</td>
+            <td>${formatPrix(row.prix)}</td>
+            <td class="prix-m2">${formatPrixM2(row.prix_m2)}</td>
+            <td class="fav-actions">
+                ${row.url
+                    ? `<button class="btn btn-sm btn-consult" data-url="${escapeAttr(row.url)}">Accéder</button>`
+                    : ''}
+                <button class="btn btn-sm btn-remove-fav"
+                        data-source="${escapeAttr(row.source)}"
+                        data-annonce-id="${escapeAttr(String(row.annonce_id))}">
+                    Retirer
+                </button>
+            </td>
+        </tr>
+    `).join('');
+
+    tbody.querySelectorAll('.btn-consult').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openUrl(btn.dataset.url);
+        });
+    });
+
+    tbody.querySelectorAll('.btn-remove-fav').forEach(btn => {
+        btn.addEventListener('click', () => removeFavori(btn));
+    });
+}
+
+async function removeFavori(btn) {
+    const source = btn.dataset.source;
+    const annonceId = btn.dataset.annonceId;
+    btn.disabled = true;
+
+    try {
+        const qs = new URLSearchParams({ source, annonce_id: annonceId });
+        const res = await fetch(`/api/favoris?${qs}`, { method: 'DELETE' });
+        if (res.ok) {
+            if (typeof favorisSet !== 'undefined') {
+                favorisSet.delete(`${source}:${annonceId}`);
+            }
+            await loadFavoris();
+            if (typeof refreshFavorisSet === 'function') {
+                await refreshFavorisSet();
+            }
+            if (activeTab !== 'favoris') {
+                search();
+            }
+        } else {
+            const result = await res.json();
+            alert('Erreur : ' + (result.error || result.message));
+            btn.disabled = false;
+        }
+    } catch (err) {
+        alert('Erreur réseau : ' + err.message);
+        btn.disabled = false;
+    }
+}
+
+function refreshFavoris() {
+    loadFavoris();
+    if (typeof refreshFavorisSet === 'function') {
+        refreshFavorisSet();
+    }
+}
+
+window.refreshFavoris = refreshFavoris;

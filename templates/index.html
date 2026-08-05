@@ -10,44 +10,22 @@
 <body>
 <div class="app">
     <header class="header">
-        <div class="header-brand">
-            <h1>Veille Immobilière Maroc</h1>
-            <p class="subtitle">Al Omrane, Sarouty & Mubawab — opportunités et nouvelles annonces</p>
+        <div class="header-brand" style="display: flex; align-items: center;">
+            <button id="btn-toggle-scrape" class="btn-hamburger" title="Ouvrir le panneau de scraping">☰</button>
+            <div>
+                <h1>Veille Immobilière Maroc</h1>
+                <p class="subtitle">Al Omrane, Sarouty & Mubawab — opportunités et nouvelles annonces</p>
+            </div>
         </div>
     </header>
 
-    <section id="stats-cards" class="stats-grid">
-        <div class="stat-card loading-card">Chargement…</div>
-    </section>
+    <div id="scrape-overlay" class="scrape-overlay"></div>
 
-    <section class="panel filters-panel">
-        <div class="filters-row">
-            <label>Source</label>
-            <select id="source">
-                <option value="all">Toutes</option>
-                <option value="alomrane">Al Omrane</option>
-                <option value="sarouty">Sarouty</option>
-                <option value="mubawab">Mubawab</option>
-            </select>
-
-            <input type="number" id="budget_min" placeholder="Budget min (DH)" step="1000">
-            <input type="number" id="budget_max" placeholder="Budget max (DH)" step="1000">
-            <input type="text" id="ville" placeholder="Ville" list="villes-list">
-            <datalist id="villes-list"></datalist>
-
-            <select id="type_bien"><option value="">Type</option></select>
-
-            <input type="number" id="surface_min" placeholder="Surface min (m²)">
-            <input type="number" id="surface_max" placeholder="Surface max (m²)">
-            <input type="number" id="prix_m2_min" placeholder="Prix/m² min">
-            <input type="number" id="prix_m2_max" placeholder="Prix/m² max">
-
-            <button type="button" id="btn-search" class="btn btn-primary">Rechercher</button>
-            <button type="button" id="btn-reset" class="btn btn-secondary">Réinitialiser</button>
+    <section id="scrape-sidebar" class="panel scrape-panel scrape-sidebar">
+        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 15px;">
+            <h2 style="font-size: 1.2rem; color: var(--primary); margin: 0;">Outils de Scraping</h2>
+            <button id="btn-close-scrape" class="btn-close" title="Fermer">×</button>
         </div>
-    </section>
-
-    <section class="panel scrape-panel">
         <div class="scrape-group">
             <label>Région Al Omrane</label>
             <select id="region_select"><option value="">— Choisir —</option></select>
@@ -81,6 +59,37 @@
         <div id="scraping-status" class="scraping-status hidden"></div>
     </section>
 
+    <section id="stats-cards" class="stats-grid">
+        <div class="stat-card loading-card">Chargement…</div>
+    </section>
+
+    <section class="panel filters-panel">
+        <div class="filters-row">
+            <label>Source</label>
+            <select id="source">
+                <option value="all">Toutes</option>
+                <option value="alomrane">Al Omrane</option>
+                <option value="sarouty">Sarouty</option>
+                <option value="mubawab">Mubawab</option>
+            </select>
+
+            <input type="number" id="budget_min" placeholder="Budget min (DH)" step="1000">
+            <input type="number" id="budget_max" placeholder="Budget max (DH)" step="1000">
+            <input type="text" id="ville" placeholder="Ville" list="villes-list">
+            <datalist id="villes-list"></datalist>
+
+            <select id="type_bien"><option value="">Type</option></select>
+
+            <input type="number" id="surface_min" placeholder="Surface min (m²)">
+            <input type="number" id="surface_max" placeholder="Surface max (m²)">
+            <input type="number" id="prix_m2_min" placeholder="Prix/m² min">
+            <input type="number" id="prix_m2_max" placeholder="Prix/m² max">
+
+            <button type="button" id="btn-search" class="btn btn-primary">Rechercher</button>
+            <button type="button" id="btn-reset" class="btn btn-secondary">Réinitialiser</button>
+        </div>
+    </section>
+
     <section class="panel results-panel">
         <div class="tabs">
             <button type="button" class="tab active" data-tab="alomrane">
@@ -91,6 +100,9 @@
             </button>
             <button type="button" class="tab" data-tab="mubawab">
                 Mubawab <span id="count-mub" class="tab-count">0</span>
+            </button>
+            <button type="button" class="tab" data-tab="favoris">
+                ⭐ Favoris <span id="count-fav" class="tab-count">0</span>
             </button>
         </div>
 
@@ -112,10 +124,11 @@
                             <th>Prix</th>
                             <th>Prix/m²</th>
                             <th>Actions</th>
+                            <th>Favoris</th>
                         </tr>
                     </thead>
                     <tbody id="tbody-sarouty">
-                        <tr><td colspan="7" class="empty">Lancez une recherche</td></tr>
+                        <tr><td colspan="8" class="empty">Lancez une recherche</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -133,10 +146,33 @@
                             <th>Prix</th>
                             <th>Prix/m²</th>
                             <th>Actions</th>
+                            <th>Favoris</th>
                         </tr>
                     </thead>
                     <tbody id="tbody-mubawab">
-                        <tr><td colspan="7" class="empty">Lancez une recherche</td></tr>
+                        <tr><td colspan="8" class="empty">Lancez une recherche</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-favoris" class="tab-content">
+            <div class="table-wrap">
+                <table class="data-table" id="table-favoris">
+                    <thead>
+                        <tr>
+                            <th>Source</th>
+                            <th>Titre</th>
+                            <th>Localisation</th>
+                            <th>Type</th>
+                            <th>Surface</th>
+                            <th>Prix</th>
+                            <th>Prix/m²</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-favoris">
+                        <tr><td colspan="8" class="empty">Aucun favori pour le moment</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -153,6 +189,20 @@
             <div class="chart-card">
                 <h3>Comparaison par ville</h3>
                 <canvas id="chart-comparison"></canvas>
+            </div>
+            <div class="chart-card chart-card-wide">
+                <div class="chart-card-header">
+                    <h3>Surface vs Prix</h3>
+                    <div class="scatter-toggle">
+                        <label><input type="radio" name="scatter-y" value="prix" checked> Prix total</label>
+                        <label><input type="radio" name="scatter-y" value="prix_m2"> Prix/m²</label>
+                    </div>
+                </div>
+                <div class="scatter-canvas-wrap">
+                    <canvas id="chart-scatter"></canvas>
+                    <p id="scatter-empty" class="chart-empty hidden">Aucune donnée pour ces filtres</p>
+                </div>
+                <p class="chart-hint">Points verts = opportunités détectées. Cliquez sur un point pour ouvrir l'annonce.</p>
             </div>
         </div>
         <div class="opportunities-section">

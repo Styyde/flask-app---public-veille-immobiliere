@@ -177,6 +177,7 @@ def filtrer_produits(**filters):
     query = """
         SELECT
             p.id AS projet_id,
+            pr.id AS produit_id,
             p.titre AS projet,
             p.localisation AS ville,
             p.region,

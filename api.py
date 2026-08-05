@@ -8,11 +8,19 @@ from config import REGIONS
 from scraper.runner import scrape_regions
 from scraper.sarouty import scraper_sarouty
 from scraper.mubawab_scraper_single import scraper_mubawab_sync
-from database.db_manager import get_projet_detail, get_statistiques_globales, init_db
+from database.db_manager import (
+    get_projet_detail,
+    get_statistiques_globales,
+    init_db,
+    ajouter_favori,
+    supprimer_favori,
+    get_favoris,
+    est_favori,
+)
 from services.filter_service import (
     parse_filtres_from_request,
     filtrer_alomrane,
-    filtrer_produits,      # <-- Ajouté pour la nouvelle route
+    filtrer_produits,
     filtrer_sarouty,
     filtrer_mubawab,
     get_filtres_disponibles,
@@ -63,7 +71,6 @@ def alomrane_projets():
 
 @app.route('/api/alomrane/produits', methods=['GET'])
 def alomrane_produits():
-    """Nouvelle route : retourne les produits Al Omrane à plat (un produit par ligne)."""
     try:
         filtres = parse_filtres_from_request(request.args)
         data = filtrer_produits(**filtres)
@@ -135,7 +142,6 @@ def moyennes():
 
 @app.route('/api/filtrer', methods=['GET'])
 def filtrer_legacy():
-    """Rétrocompatibilité."""
     from services.filter_service import get_filtered_data
     import pandas as pd
     try:
@@ -221,6 +227,100 @@ def scraper_mubawab_endpoint():
             'message': f'Scraping Mubawab terminé ({region}).',
             'nouveaux': nb,
         })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== FAVORIS ====================
+
+@app.route('/api/favoris', methods=['GET'])
+def favoris_list():
+    try:
+        return jsonify(get_favoris())
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/favoris', methods=['POST'])
+def favoris_add():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Données manquantes'}), 400
+        
+        source = data.get('source')
+        annonce_id = data.get('annonce_id')
+        if not source or annonce_id is None or annonce_id == '':
+            return jsonify({'error': 'source et annonce_id sont requis'}), 400
+        
+        annonce_id = str(annonce_id)
+        app.logger.info(f"Ajout favori : source={source}, annonce_id={annonce_id}")
+        
+        url = data.get('url', '')
+        titre = data.get('titre', 'Sans titre')
+        localisation = data.get('localisation', '')
+        type_bien = data.get('type_bien', '')
+        surface = data.get('surface', '')
+        prix = data.get('prix', '')
+        prix_m2 = data.get('prix_m2', None)
+        
+        inserted = ajouter_favori(source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2)
+        if inserted:
+            return jsonify({'message': 'Annonce ajoutée aux favoris'}), 201
+        else:
+            return jsonify({'message': 'Annonce déjà dans les favoris'}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/favoris', methods=['DELETE'])
+def favoris_delete():
+    try:
+        data = request.get_json(silent=True) or {}
+        source = request.args.get('source') or data.get('source')
+        annonce_id = request.args.get('annonce_id') or data.get('annonce_id')
+        if not source or annonce_id is None or annonce_id == '':
+            return jsonify({'error': 'source et annonce_id sont requis'}), 400
+        deleted = supprimer_favori(source, str(annonce_id))
+        if deleted:
+            return jsonify({'message': 'Annonce retirée des favoris'}), 200
+        return jsonify({'message': 'Annonce non trouvée dans les favoris'}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/favoris/<source>/<path:annonce_id>', methods=['DELETE'])
+def favoris_delete_legacy(source, annonce_id):
+    """Rétrocompatibilité pour les IDs sans slash."""
+    try:
+        deleted = supprimer_favori(source, annonce_id)
+        if deleted:
+            return jsonify({'message': 'Annonce retirée des favoris'}), 200
+        return jsonify({'message': 'Annonce non trouvée dans les favoris'}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/favoris/set', methods=['GET'])
+def favoris_set():
+    try:
+        from database.db_manager import get_favoris_set
+        return jsonify(get_favoris_set())
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/favoris/check/<source>/<annonce_id>', methods=['GET'])
+def favoris_check(source, annonce_id):
+    try:
+        exists = est_favori(source, annonce_id)
+        return jsonify({'favori': exists})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

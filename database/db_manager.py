@@ -89,6 +89,86 @@ def init_db():
     
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_url ON projets (url)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_localisation ON projets (localisation)")
+
+    # ---- Table Favoris (avec migration) ----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS favoris (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            annonce_id TEXT NOT NULL,
+            url TEXT,
+            titre TEXT,
+            localisation TEXT,
+            type_bien TEXT,
+            surface TEXT,
+            prix TEXT,
+            prix_m2 REAL,
+            date_ajout DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source, annonce_id)
+        )
+    """)
+    
+    # Migration : ajouter les colonnes manquantes
+    cursor.execute("PRAGMA table_info(favoris)")
+    existing_columns = [col[1] for col in cursor.fetchall()]
+
+    # Migration legacy : ancienne colonne id_annonce → annonce_id
+    if 'id_annonce' in existing_columns:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS favoris_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                annonce_id TEXT NOT NULL,
+                url TEXT,
+                titre TEXT,
+                localisation TEXT,
+                type_bien TEXT,
+                surface TEXT,
+                prix TEXT,
+                prix_m2 REAL,
+                date_ajout DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source, annonce_id)
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO favoris_new
+                (source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2, date_ajout)
+            SELECT
+                source,
+                COALESCE(NULLIF(annonce_id, ''), id_annonce),
+                url, titre, localisation, type_bien, surface, prix, prix_m2, date_ajout
+            FROM favoris
+            WHERE COALESCE(NULLIF(annonce_id, ''), id_annonce) IS NOT NULL
+              AND COALESCE(NULLIF(annonce_id, ''), id_annonce) != ''
+        """)
+        cursor.execute("DROP TABLE favoris")
+        cursor.execute("ALTER TABLE favoris_new RENAME TO favoris")
+        existing_columns = [
+            col[1] for col in cursor.execute("PRAGMA table_info(favoris)").fetchall()
+        ]
+    
+    columns_to_add = {
+        'annonce_id': 'TEXT NOT NULL DEFAULT ""',
+        'url': 'TEXT',
+        'titre': 'TEXT',
+        'localisation': 'TEXT',
+        'type_bien': 'TEXT',
+        'surface': 'TEXT',
+        'prix': 'TEXT',
+        'prix_m2': 'REAL',
+        'date_ajout': 'DATETIME DEFAULT CURRENT_TIMESTAMP'
+    }
+    
+    for col, col_type in columns_to_add.items():
+        if col not in existing_columns:
+            try:
+                cursor.execute(f"ALTER TABLE favoris ADD COLUMN {col} {col_type}")
+                print(f"✅ Migration : colonne '{col}' ajoutée à la table favoris")
+            except sqlite3.OperationalError as e:
+                print(f"⚠️ Impossible d'ajouter la colonne {col} : {e}")
+    
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_favoris_source ON favoris (source)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_favoris_date ON favoris (date_ajout)")
     
     conn.commit()
     conn.close()
@@ -589,6 +669,11 @@ def get_statistiques_globales():
     except sqlite3.OperationalError:
         stats['villes_mubawab'] = []
         stats['types_mubawab'] = []
+    
+    # Favoris
+    cursor.execute("SELECT COUNT(*) FROM favoris")
+    stats['nb_favoris'] = cursor.fetchone()[0]
+    
     conn.close()
     return stats
 
@@ -641,3 +726,74 @@ def get_prix_m2_stats(ville=None, type_bien=None):
         "ecart_type": round(statistics.stdev(prix_m2_list), 2) if len(prix_m2_list) > 1 else 0,
         "nombre": len(prix_m2_list)
     }
+
+# ==================== FAVORIS ====================
+
+def ajouter_favori(source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2):
+    """Ajoute une annonce aux favoris."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT OR IGNORE INTO favoris 
+            (source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2))
+        conn.commit()
+        inserted = cursor.rowcount > 0
+        conn.close()
+        return inserted
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise e
+
+def supprimer_favori(source, annonce_id):
+    """Supprime une annonce des favoris."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM favoris WHERE source = ? AND annonce_id = ?", (source, annonce_id))
+        conn.commit()
+        deleted = cursor.rowcount > 0
+        conn.close()
+        return deleted
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise e
+
+def get_favoris():
+    """Retourne la liste de tous les favoris, triés par date d'ajout décroissante."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM favoris ORDER BY date_ajout DESC")
+    rows = cursor.fetchall()
+    result = [dict(row) for row in rows]
+    conn.close()
+    return result
+
+
+def get_favoris_set():
+    """Retourne un dict {source: [annonce_id, ...]} pour le frontend."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT source, annonce_id FROM favoris")
+    result = {}
+    for source, annonce_id in cursor.fetchall():
+        key = str(source)
+        if key not in result:
+            result[key] = []
+        result[key].append(str(annonce_id))
+    conn.close()
+    return result
+
+def est_favori(source, annonce_id):
+    """Vérifie si une annonce est déjà dans les favoris."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM favoris WHERE source = ? AND annonce_id = ?", (source, annonce_id))
+    exists = cursor.fetchone() is not None
+    conn.close()
+    return exists

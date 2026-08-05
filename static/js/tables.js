@@ -1,11 +1,49 @@
-// tables.js – Version simplifiée : Al Omrane en table unique (produits à plat)
+// static/js/tables.js
+const expandedProjects = new Set();
+const expandedLots = new Set();
+let favorisSet = new Set();
+
+async function refreshFavorisSet() {
+    try {
+        const data = await fetchJSON('/api/favoris');
+        favorisSet = new Set(data.map(f => `${f.source}:${String(f.annonce_id)}`));
+    } catch {
+        favorisSet = new Set();
+    }
+    return favorisSet;
+}
+
+function isFavori(source, annonceId) {
+    if (annonceId === null || annonceId === undefined || annonceId === '') return false;
+    return favorisSet.has(`${source}:${String(annonceId)}`);
+}
+
+function buildFavButton(source, annonceId, attrs) {
+    const active = isFavori(source, annonceId);
+    const disabled = active ? 'disabled' : '';
+    const cls = active ? 'btn btn-sm btn-fav is-active' : 'btn btn-sm btn-fav';
+    const label = active ? '★ Favori' : '⭐ Ajouter';
+    return `
+        <button class="${cls}" ${disabled}
+                data-source="${escapeAttr(source)}"
+                data-annonce-id="${escapeAttr(String(annonceId))}"
+                data-url="${escapeAttr(attrs.url || '')}"
+                data-titre="${escapeAttr(attrs.titre || '')}"
+                data-localisation="${escapeAttr(attrs.localisation || '')}"
+                data-type="${escapeAttr(attrs.type || '')}"
+                data-surface="${escapeAttr(attrs.surface ?? '')}"
+                data-prix="${escapeAttr(attrs.prix ?? '')}"
+                data-prix-m2="${attrs.prix_m2 ?? ''}">
+            ${label}
+        </button>`;
+}
 
 function renderSarouty(rows) {
     const tbody = document.getElementById('tbody-sarouty');
     document.getElementById('count-sar').textContent = rows.length;
 
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">Aucune annonce Sarouty pour ces filtres</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">Aucune annonce Sarouty pour ces filtres</td></tr>';
         return;
     }
 
@@ -22,6 +60,17 @@ function renderSarouty(rows) {
                     ? `<button class="btn btn-sm btn-consult" data-url="${escapeAttr(row.url_annonce)}">Accéder</button>`
                     : '—'}
             </td>
+            <td>
+                ${buildFavButton('sarouty', row.property_id, {
+                    url: row.url_annonce,
+                    titre: row.projet,
+                    localisation: row.localisation,
+                    type: row.type,
+                    surface: row.surface,
+                    prix: row.prix,
+                    prix_m2: row.prix_m2,
+                })}
+            </td>
         </tr>
     `).join('');
 
@@ -31,6 +80,8 @@ function renderSarouty(rows) {
             openUrl(btn.dataset.url);
         });
     });
+
+    bindFavButtons(tbody);
 }
 
 function renderMubawab(rows) {
@@ -38,7 +89,7 @@ function renderMubawab(rows) {
     document.getElementById('count-mub').textContent = rows.length;
 
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">Aucune annonce Mubawab pour ces filtres</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">Aucune annonce Mubawab pour ces filtres</td></tr>';
         return;
     }
 
@@ -55,6 +106,17 @@ function renderMubawab(rows) {
                     ? `<button class="btn btn-sm btn-consult" data-url="${escapeAttr(row.url_annonce)}">Accéder</button>`
                     : '—'}
             </td>
+            <td>
+                ${buildFavButton('mubawab', row.id, {
+                    url: row.url_annonce,
+                    titre: row.projet,
+                    localisation: row.localisation,
+                    type: row.type,
+                    surface: row.surface,
+                    prix: row.prix,
+                    prix_m2: row.prix_m2,
+                })}
+            </td>
         </tr>
     `).join('');
 
@@ -64,16 +126,9 @@ function renderMubawab(rows) {
             openUrl(btn.dataset.url);
         });
     });
-}
 
-function escapeAttr(str) {
-    return String(str || '')
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;');
+    bindFavButtons(tbody);
 }
-
-/* ==================== AL OMRANE – TABLE UNIQUE (PRODUITS À PLAT) ==================== */
 
 function renderAlomrane(rows) {
     const container = document.getElementById('alomrane-list');
@@ -97,33 +152,40 @@ function renderAlomrane(rows) {
                         <th>Prix</th>
                         <th>Prix/m²</th>
                         <th>Actions</th>
+                        <th>Favoris</th>
                     </tr>
                 </thead>
                 <tbody>
     `;
 
     rows.forEach(row => {
-        const projet = fmt(row.projet);
-        const localisation = fmt(row.ville);
-        const lot = fmt(row.lot);
-        const produit = fmt(row.produit);
-        const surface = formatSurface(row.surface);
-        const prix = formatPrix(row.prix);
-        const prix_m2 = formatPrixM2(row.prix_m2);
         const url = row.url_produit || row.url_projet;
-
+        const annonceId = row.produit_id;
         html += `
             <tr>
-                <td><strong>${projet}</strong></td>
-                <td>${localisation}</td>
-                <td>${lot}</td>
-                <td>${produit}</td>
-                <td>${surface}</td>
-                <td>${prix}</td>
-                <td class="prix-m2">${prix_m2}</td>
+                <td><strong>${fmt(row.projet)}</strong></td>
+                <td>${fmt(row.ville)}</td>
+                <td>${fmt(row.lot)}</td>
+                <td>${fmt(row.produit)}</td>
+                <td>${formatSurface(row.surface)}</td>
+                <td>${formatPrix(row.prix)}</td>
+                <td class="prix-m2">${formatPrixM2(row.prix_m2)}</td>
                 <td>
                     ${url
                         ? `<button class="btn btn-sm btn-consult" data-url="${escapeAttr(url)}">Accéder</button>`
+                        : '—'}
+                </td>
+                <td>
+                    ${annonceId != null
+                        ? buildFavButton('alomrane', annonceId, {
+                            url,
+                            titre: row.projet,
+                            localisation: row.ville,
+                            type: row.type_bien,
+                            surface: row.surface,
+                            prix: row.prix,
+                            prix_m2: row.prix_m2,
+                        })
                         : '—'}
                 </td>
             </tr>
@@ -138,6 +200,8 @@ function renderAlomrane(rows) {
 
     container.innerHTML = html;
 
+    bindFavButtons(container);
+
     container.querySelectorAll('.btn-consult').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -146,148 +210,59 @@ function renderAlomrane(rows) {
     });
 }
 
-// =====================================================
-// Anciennes fonctions d'expansion (conservées commentées pour référence)
-// Elles ne sont plus utilisées avec la nouvelle version.
-// =====================================================
-
-/*
-const expandedProjects = new Set();
-const expandedLots = new Set();
-
-async function toggleProject(id) {
-    const row = document.querySelector(`tr.project-row[data-project-id="${id}"]`);
-    const detailRow = document.getElementById(`detail-row-${id}`);
-    const btn = document.querySelector(`.btn-detail[data-id="${id}"]`);
-    if (!detailRow || !row || !btn) return;
-
-    if (expandedProjects.has(id)) {
-        expandedProjects.delete(id);
-        detailRow.style.display = 'none';
-        row.classList.remove('expanded');
-        btn.textContent = 'Détails';
-    } else {
-        expandedProjects.add(id);
-        detailRow.style.display = 'table-row';
-        row.classList.add('expanded');
-        btn.textContent = 'Masquer';
-        await loadProjectDetail(id);
-    }
+function bindFavButtons(container) {
+    container.querySelectorAll('.btn-fav:not(.is-active)').forEach(btn => {
+        btn.addEventListener('click', handleFavClick);
+    });
 }
 
-async function loadProjectDetail(id) {
-    const panel = document.getElementById(`detail-panel-${id}`);
-    if (!panel) return;
-    if (panel.dataset.loaded === 'true') return;
-    panel.innerHTML = '<div class="yt-loading">Chargement des lots…</div>';
+async function handleFavClick(e) {
+    const btn = e.currentTarget;
+    if (btn.classList.contains('is-active')) return;
+
+    btn.disabled = true;
+
+    const data = {
+        source: btn.dataset.source,
+        annonce_id: btn.dataset.annonceId,
+        url: btn.dataset.url,
+        titre: btn.dataset.titre,
+        localisation: btn.dataset.localisation,
+        type_bien: btn.dataset.type,
+        surface: btn.dataset.surface,
+        prix: btn.dataset.prix,
+        prix_m2: parseFloat(btn.dataset.prixM2) || null,
+    };
+
     try {
-        const projet = await fetchJSON(`/api/alomrane/projets/${id}`);
-        panel.innerHTML = renderHierarchyHTML(projet);
-        panel.dataset.loaded = 'true';
-        bindLotToggles(panel, id);
-        bindConsultButtons(panel);
-    } catch (err) {
-        panel.innerHTML = `<div class="yt-error">Erreur : ${err.message}</div>`;
-    }
-}
-
-function bindConsultButtons(root) {
-    root.querySelectorAll('.btn-consult').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            openUrl(btn.dataset.url);
+        const response = await fetch('/api/favoris', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
         });
-    });
-}
-
-function bindLotToggles(panel, projetId) {
-    panel.querySelectorAll('.yt-lot-header').forEach(header => {
-        header.addEventListener('click', (e) => {
-            if (e.target.closest('.btn-consult')) return;
-            const lotId = header.dataset.lotId;
-            const key = `${projetId}-${lotId}`;
-            const body = panel.querySelector(`#lot-body-${projetId}-${lotId}`);
-            const chevron = header.querySelector('.yt-chevron');
-            if (!body) return;
-            if (expandedLots.has(key)) {
-                expandedLots.delete(key);
-                body.style.display = 'none';
-                header.classList.remove('is-open');
-                chevron?.classList.remove('open');
-            } else {
-                expandedLots.add(key);
-                body.style.display = 'block';
-                header.classList.add('is-open');
-                chevron?.classList.add('open');
+        const result = await response.json();
+        if (response.ok) {
+            favorisSet.add(`${data.source}:${String(data.annonce_id)}`);
+            btn.textContent = '★ Favori';
+            btn.classList.add('is-active');
+            if (typeof window.refreshFavoris === 'function') {
+                window.refreshFavoris();
             }
-        });
-    });
-}
-
-function renderHierarchyHTML(projet) {
-    if (!projet.lots || !projet.lots.length) {
-        return '<div class="empty-state">Aucun lot disponible</div>';
+        } else {
+            alert('Erreur : ' + (result.error || result.message));
+            btn.disabled = false;
+        }
+    } catch (err) {
+        alert('Erreur réseau : ' + err.message);
+        btn.disabled = false;
     }
-    return `
-    <div class="yt-hierarchy">
-        <div class="yt-breadcrumb">Projet <span>›</span> Lots <span>›</span> Produits</div>
-        ${projet.lots.map(lot => {
-            const key = `${projet.id}-${lot.id}`;
-            const isOpen = expandedLots.has(key) || projet.lots.length === 1;
-            if (projet.lots.length === 1) expandedLots.add(key);
-            const produits = lot.lignes || [];
-            return `
-            <div class="yt-lot ${isOpen ? 'is-open' : ''}">
-                <div class="yt-lot-header ${isOpen ? 'is-open' : ''}" data-lot-id="${lot.id}">
-                    <button class="yt-chevron ${isOpen ? 'open' : ''}" aria-label="Développer le lot">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
-                    </button>
-                    <div class="yt-lot-info">
-                        <div class="yt-lot-title">${fmt(lot.lot_titre)}</div>
-                        <div class="yt-lot-meta">
-                            ${fmt(lot.nb_unites)}
-                            ${lot.prix_min ? ` · ${fmt(lot.prix_min)} – ${fmt(lot.prix_max)}` : ''}
-                            · ${produits.length} produit${produits.length > 1 ? 's' : ''}
-                        </div>
-                    </div>
-                </div>
-                <div class="yt-lot-body" id="lot-body-${projet.id}-${lot.id}" style="display:${isOpen ? 'block' : 'none'}">
-                    ${produits.length ? renderProduitsTable(produits, projet) : '<div class="empty-state">Aucun produit</div>'}
-                </div>
-            </div>`;
-        }).join('')}
-    </div>`;
 }
 
-function renderProduitsTable(produits, projet) {
-    return `
-    <div class="yt-products-wrap">
-        <table class="yt-products">
-            <thead>
-                <tr>
-                    <th>Produit</th>
-                    <th>Surface</th>
-                    <th>Prix</th>
-                    <th>Prix/m²</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                ${produits.map(l => `
-                    <tr>
-                        <td class="prod-id">${fmt(l.no_produit)}</td>
-                        <td>${formatSurface(l.surface)}</td>
-                        <td>${formatPrix(l.prix)}</td>
-                        <td class="prix-m2">${formatPrixM2(l.prix_m2)}</td>
-                        <td>
-                            ${(l.url || projet.url)
-                                ? `<button class="btn btn-sm btn-consult" data-url="${escapeAttr(l.url || projet.url)}">Accéder</button>`
-                                : '—'}
-                        </td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
-    </div>`;
+function escapeAttr(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;');
 }
-*/
+
+window.refreshFavorisSet = refreshFavorisSet;

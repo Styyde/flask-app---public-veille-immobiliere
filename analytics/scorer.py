@@ -138,20 +138,24 @@ def _get_filtered_listings(filtres=None):
     return all_data
 
 
-def calculer_opportunites_sur_donnees(produits_valides, seuil_ecart=15, max_resultats=20):
+def _normaliser_bien(p):
+    """Normalise les champs d'affichage d'un bien."""
+    p_out = p.copy()
+    p_out['titre'] = p_out.get('titre') or p_out.get('projet') or 'Sans titre'
+    p_out['localisation'] = p_out.get('ville') or p_out.get('localisation') or 'Inconnue'
+    p_out['lot_titre'] = p_out.get('lot_titre') or p_out.get('lot')
+    return p_out
+
+
+def annoter_opportunites_sur_donnees(produits_valides, seuil_ecart=15):
     """
-    Calcule les opportunités à partir d'une liste de biens DÉJÀ filtrés.
-    Une opportunité = bien dont le prix/m² est significativement inférieur
-    à la moyenne de son groupe (ville + type_bien).
-    - Exclut automatiquement les biens avec prix_m2 < 100 (valeur aberrante).
-    - Si des opportunités existent (écart < -seuil), on les retourne triées par écart négatif.
-    - Sinon, on retourne les 5 biens les moins chers du sous-ensemble, avec un indicateur est_opportunite=False.
-    - Cela garantit que la liste n'est jamais vide quand il y a des données.
+    Annote tous les biens avec est_opportunite et ecart_pourcent
+    (comparaison prix/m² vs moyenne du groupe ville + type_bien).
+    Exclut les prix/m² aberrants (< 100 DH/m²).
     """
     if not produits_valides:
         return []
 
-    # === EXCLUSION DES PRIX/M² ABERRANTS (< 100 DH/m²) ===
     produits_valides = [
         p for p in produits_valides
         if p.get('prix_m2', 0) >= 100
@@ -159,12 +163,11 @@ def calculer_opportunites_sur_donnees(produits_valides, seuil_ecart=15, max_resu
     if not produits_valides:
         return []
 
-    # 1. Moyennes globales par type (fallback si le groupe est trop petit)
     global_prix_m2_by_type = defaultdict(list)
     for p in produits_valides:
         prix_m2 = p.get('prix_m2', 0)
         if prix_m2 and prix_m2 > 0:
-            type_bien = p.get('type_bien') or 'Inconnu'
+            type_bien = p.get('type_bien') or 'Inconnue'
             global_prix_m2_by_type[type_bien].append(prix_m2)
 
     global_avg = {
@@ -172,17 +175,16 @@ def calculer_opportunites_sur_donnees(produits_valides, seuil_ecart=15, max_resu
         for t, vals in global_prix_m2_by_type.items() if len(vals) > 0
     }
 
-    # 2. Regroupement par (ville, type_bien)
     groupes = defaultdict(list)
     for p in produits_valides:
         ville = p.get('ville') or p.get('localisation') or 'Inconnue'
-        type_bien = p.get('type_bien') or 'Inconnu'
+        type_bien = p.get('type_bien') or 'Inconnue'
         cle = f"{ville}_{type_bien}"
         groupes[cle].append(p)
 
-    opportunites = []
+    resultat = []
 
-    for cle, items in groupes.items():
+    for items in groupes.values():
         prix_m2_liste = [p['prix_m2'] for p in items if p.get('prix_m2', 0) > 0]
         if not prix_m2_liste:
             continue
@@ -191,8 +193,7 @@ def calculer_opportunites_sur_donnees(produits_valides, seuil_ecart=15, max_resu
             moyenne = statistics.mean(prix_m2_liste)
             ecart_type = statistics.stdev(prix_m2_liste) if len(prix_m2_liste) > 1 else 0
         else:
-            # Groupe trop petit → on utilise la moyenne globale du même type
-            type_bien = items[0].get('type_bien', 'Inconnu')
+            type_bien = items[0].get('type_bien', 'Inconnue')
             moyenne = global_avg.get(type_bien, 0)
             ecart_type = 0
 
@@ -205,31 +206,38 @@ def calculer_opportunites_sur_donnees(produits_valides, seuil_ecart=15, max_resu
                 continue
 
             ecart = ((p_m2 - moyenne) / moyenne) * 100
+            p_out = _normaliser_bien(p)
+            p_out['moyenne_groupe'] = round(moyenne, 2)
+            p_out['ecart_type_groupe'] = round(ecart_type, 2)
+            p_out['ecart_pourcent'] = round(ecart, 2)
+            p_out['est_opportunite'] = ecart < -seuil_ecart
+            p_out['score'] = (
+                round((moyenne - p_m2) / (ecart_type + 1), 2) if ecart_type > 0 else 999
+            )
+            resultat.append(p_out)
 
-            # === On ne garde QUE les opportunités (sous le seuil) ===
-            if ecart < -seuil_ecart:
-                p_out = p.copy()
-                p_out['moyenne_groupe'] = round(moyenne, 2)
-                p_out['ecart_type_groupe'] = round(ecart_type, 2)
-                p_out['ecart_pourcent'] = round(ecart, 2)
-                p_out['est_opportunite'] = True
-                p_out['score'] = round((moyenne - p_m2) / (ecart_type + 1), 2) if ecart_type > 0 else 999
+    return resultat
 
-                # Normalisation des champs pour l'affichage
-                p_out['titre'] = p_out.get('titre') or p_out.get('projet') or 'Sans titre'
-                p_out['localisation'] = p_out.get('ville') or p_out.get('localisation') or 'Inconnue'
-                p_out['lot_titre'] = p_out.get('lot_titre') or p_out.get('lot')
 
-                opportunites.append(p_out)
+def calculer_opportunites_sur_donnees(produits_valides, seuil_ecart=15, max_resultats=20):
+    """
+    Calcule les opportunités à partir d'une liste de biens DÉJÀ filtrés.
+    Une opportunité = bien dont le prix/m² est significativement inférieur
+    à la moyenne de son groupe (ville + type_bien).
+    - Exclut automatiquement les biens avec prix_m2 < 100 (valeur aberrante).
+    - Si des opportunités existent (écart < -seuil), on les retourne triées par écart négatif.
+    - Sinon, on retourne les 5 biens les moins chers du sous-ensemble, avec un indicateur est_opportunite=False.
+    - Cela garantit que la liste n'est jamais vide quand il y a des données.
+    """
+    annotated = annoter_opportunites_sur_donnees(produits_valides, seuil_ecart=seuil_ecart)
+    if not annotated:
+        return []
 
-    # Tri : les plus sous-évaluées en premier (écart le plus négatif)
+    opportunites = [p for p in annotated if p.get('est_opportunite')]
     opportunites.sort(key=lambda x: x['ecart_pourcent'])
 
-    # 3. Fallback : si aucune opportunité, retourner les biens les moins chers
-    if not opportunites and produits_valides:
-        # Trier par prix/m² croissant
-        sorted_by_price = sorted(produits_valides, key=lambda x: x.get('prix_m2', 999999))
-        # Prendre les 5 premiers ou moins
+    if not opportunites:
+        sorted_by_price = sorted(annotated, key=lambda x: x.get('prix_m2', 999999))
         top_cheap = sorted_by_price[:min(5, len(sorted_by_price))]
         for p in top_cheap:
             p_out = p.copy()
@@ -237,13 +245,8 @@ def calculer_opportunites_sur_donnees(produits_valides, seuil_ecart=15, max_resu
             p_out['ecart_pourcent'] = 0
             p_out['moyenne_groupe'] = 0
             p_out['score'] = 0
-            # Normalisation
-            p_out['titre'] = p_out.get('titre') or p_out.get('projet') or 'Sans titre'
-            p_out['localisation'] = p_out.get('ville') or p_out.get('localisation') or 'Inconnue'
-            p_out['lot_titre'] = p_out.get('lot_titre') or p_out.get('lot')
             opportunites.append(p_out)
 
-    # Limiter le nombre de résultats retournés
     return opportunites[:max_resultats]
 
 

@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from .filter_service import filtrer_produits, filtrer_sarouty, filtrer_mubawab
 from .type_mapping import get_normalized_type
-from analytics.scorer import calculer_opportunites_sur_donnees
+from analytics.scorer import calculer_opportunites_sur_donnees, annoter_opportunites_sur_donnees
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,8 @@ def get_analytics_dashboard(filtres=None):
             'distribution_types': [],
             'distribution_etages': [],
             'ville_etage': [],
-            'opportunites': []
+            'opportunites': [],
+            'scatter': [],
         }
 
     # 6. Graphiques
@@ -175,7 +176,14 @@ def get_analytics_dashboard(filtres=None):
     comparaison_villes = _groupby_and_avg(valid_data, 'ville')
     distribution_types = _groupby_and_avg(valid_data, 'type_bien')
 
-    # 7. Opportunités
+    # 7. Opportunités + scatter
+    annotated = annoter_opportunites_sur_donnees(valid_data)
+    ann_lookup = {
+        _scatter_key(d): d for d in annotated
+    }
+    scatter = [_build_scatter_point(d, ann_lookup.get(_scatter_key(d))) for d in valid_data]
+    scatter = _limit_scatter(scatter, max_points=500)
+
     opportunites = calculer_opportunites_sur_donnees(valid_data)
     opportunites = opportunites[:20] if len(opportunites) > 20 else opportunites
 
@@ -185,7 +193,8 @@ def get_analytics_dashboard(filtres=None):
         'distribution_types': distribution_types,
         'distribution_etages': [],
         'ville_etage': [],
-        'opportunites': opportunites
+        'opportunites': opportunites,
+        'scatter': scatter,
     }
 
 
@@ -197,6 +206,38 @@ def analyser_opportunites(filtres=None):
 
 
 # ---- Fonctions utilitaires ----
+
+def _scatter_key(d):
+    return (d.get('source'), d.get('titre'), d.get('surface'), d.get('prix'))
+
+
+def _build_scatter_point(d, ann=None):
+    ann = ann or {}
+    return {
+        'surface': d['surface'],
+        'prix': d['prix'],
+        'prix_m2': d['prix_m2'],
+        'source': d.get('source', ''),
+        'titre': d.get('titre') or 'Sans titre',
+        'localisation': d.get('localisation') or d.get('ville') or '',
+        'url': d.get('url') or '',
+        'est_opportunite': bool(ann.get('est_opportunite', False)),
+        'ecart_pourcent': ann.get('ecart_pourcent', 0),
+    }
+
+
+def _limit_scatter(points, max_points=500):
+    if len(points) <= max_points:
+        return points
+    opportunites = [p for p in points if p.get('est_opportunite')]
+    others = [p for p in points if not p.get('est_opportunite')]
+    remaining = max_points - len(opportunites)
+    if remaining <= 0:
+        return opportunites[:max_points]
+    step = max(1, len(others) // remaining)
+    sampled = others[::step][:remaining]
+    return opportunites + sampled
+
 
 def _get_histogram(values, bins=10):
     if not values:

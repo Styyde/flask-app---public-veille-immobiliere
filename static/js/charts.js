@@ -1,6 +1,9 @@
 // static/js/charts.js
 let histogramChart = null;
 let comparisonChart = null;
+let scatterChart = null;
+let lastScatterData = null;
+let scatterToggleBound = false;
 
 const CHART_COLORS = {
     primary: '#2874a6',
@@ -9,10 +12,215 @@ const CHART_COLORS = {
     grid: '#e8edf2',
 };
 
+const SOURCE_COLORS = {
+    'Al Omrane': { bg: 'rgba(40, 116, 166, 0.65)', border: '#2874a6' },
+    'Sarouty': { bg: 'rgba(230, 126, 34, 0.65)', border: '#e67e22' },
+    'Mubawab': { bg: 'rgba(142, 68, 173, 0.65)', border: '#8e44ad' },
+};
+
+const OPP_COLOR = { bg: 'rgba(39, 174, 96, 0.85)', border: '#1e8449' };
+
 function renderCharts(data) {
     renderHistogram(data.histogram);
     renderComparison(data.comparaison);
+    renderScatter(data.scatter || []);
     renderOpportunities(data.opportunites);
+}
+
+function getScatterYMode() {
+    const checked = document.querySelector('input[name="scatter-y"]:checked');
+    return checked ? checked.value : 'prix';
+}
+
+function bindScatterToggle() {
+    if (scatterToggleBound) return;
+    document.querySelectorAll('input[name="scatter-y"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            if (lastScatterData) renderScatter(lastScatterData);
+        });
+    });
+    scatterToggleBound = true;
+}
+
+function linearRegression(points) {
+    const n = points.length;
+    if (n < 2) return null;
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+    for (const p of points) {
+        sumX += p.x;
+        sumY += p.y;
+        sumXY += p.x * p.y;
+        sumXX += p.x * p.x;
+    }
+    const denom = n * sumXX - sumX * sumX;
+    if (denom === 0) return null;
+    const a = (n * sumXY - sumX * sumY) / denom;
+    const b = (sumY - a * sumX) / n;
+    return { a, b };
+}
+
+function formatAxisPrice(val) {
+    if (val >= 1_000_000) return (val / 1_000_000).toFixed(1) + ' M';
+    if (val >= 1_000) return (val / 1_000).toFixed(0) + ' K';
+    return Math.round(val).toLocaleString('fr-FR');
+}
+
+function buildScatterDatasets(points, yMode) {
+    const sources = ['Al Omrane', 'Sarouty', 'Mubawab'];
+    const datasets = [];
+
+    sources.forEach(source => {
+        const colors = SOURCE_COLORS[source] || SOURCE_COLORS['Al Omrane'];
+        const normal = points.filter(p => p.source === source && !p.est_opportunite);
+        const opps = points.filter(p => p.source === source && p.est_opportunite);
+
+        if (normal.length) {
+            datasets.push({
+                label: source,
+                data: normal.map(p => ({
+                    x: p.surface,
+                    y: yMode === 'prix_m2' ? p.prix_m2 : p.prix,
+                    _meta: p,
+                })),
+                backgroundColor: colors.bg,
+                borderColor: colors.border,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+            });
+        }
+
+        if (opps.length) {
+            datasets.push({
+                label: `${source} (opportunité)`,
+                data: opps.map(p => ({
+                    x: p.surface,
+                    y: yMode === 'prix_m2' ? p.prix_m2 : p.prix,
+                    _meta: p,
+                })),
+                backgroundColor: OPP_COLOR.bg,
+                borderColor: OPP_COLOR.border,
+                pointRadius: 8,
+                pointHoverRadius: 10,
+                borderWidth: 2,
+            });
+        }
+    });
+
+    if (yMode === 'prix_m2' && points.length >= 2) {
+        const regPoints = points.map(p => ({ x: p.surface, y: p.prix_m2 }));
+        const reg = linearRegression(regPoints);
+        if (reg) {
+            const xs = points.map(p => p.surface);
+            const minX = Math.min(...xs);
+            const maxX = Math.max(...xs);
+            datasets.push({
+                label: 'Tendance prix/m²',
+                type: 'line',
+                data: [
+                    { x: minX, y: reg.a * minX + reg.b },
+                    { x: maxX, y: reg.a * maxX + reg.b },
+                ],
+                borderColor: 'rgba(231, 76, 60, 0.7)',
+                borderWidth: 2,
+                borderDash: [6, 4],
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                fill: false,
+                order: 0,
+            });
+        }
+    }
+
+    return datasets;
+}
+
+function renderScatter(points) {
+    bindScatterToggle();
+
+    const canvas = document.getElementById('chart-scatter');
+    const emptyEl = document.getElementById('scatter-empty');
+    if (!canvas) return;
+
+    lastScatterData = points || [];
+
+    if (scatterChart) {
+        scatterChart.destroy();
+        scatterChart = null;
+    }
+
+    if (!points || points.length === 0) {
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        canvas.style.visibility = 'hidden';
+        return;
+    }
+
+    if (emptyEl) emptyEl.classList.add('hidden');
+    canvas.style.visibility = 'visible';
+
+    const yMode = getScatterYMode();
+    const yLabel = yMode === 'prix_m2' ? 'Prix/m² (DH)' : 'Prix total (DH)';
+    const datasets = buildScatterDatasets(points, yMode);
+
+    scatterChart = new Chart(canvas, {
+        type: 'scatter',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            onClick(_event, elements) {
+                if (!elements.length) return;
+                const el = elements[0];
+                const meta = scatterChart.data.datasets[el.datasetIndex].data[el.index];
+                if (meta && meta._meta && meta._meta.url) {
+                    openUrl(meta._meta.url);
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'bottom',
+                    labels: { boxWidth: 10, font: { size: 11 } },
+                },
+                tooltip: {
+                    callbacks: {
+                        title(items) {
+                            const meta = items[0]?.raw?._meta;
+                            return meta ? fmt(meta.titre) : '';
+                        },
+                        label(ctx) {
+                            const p = ctx.raw._meta;
+                            if (!p) return '';
+                            const lines = [
+                                `Source : ${fmt(p.source)}`,
+                                `Localisation : ${fmt(p.localisation)}`,
+                                `Surface : ${formatSurface(p.surface)}`,
+                                `Prix : ${formatPrix(p.prix)}`,
+                                `Prix/m² : ${formatPrixM2(p.prix_m2)}`,
+                            ];
+                            if (p.est_opportunite && p.ecart_pourcent != null) {
+                                lines.push(`Écart : ${p.ecart_pourcent}% vs moyenne`);
+                            }
+                            if (p.url) lines.push('Cliquer pour ouvrir');
+                            return lines;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    title: { display: true, text: 'Surface (m²)' },
+                    grid: { color: CHART_COLORS.grid },
+                },
+                y: {
+                    title: { display: true, text: yLabel },
+                    grid: { color: CHART_COLORS.grid },
+                    ticks: {
+                        callback: val => formatAxisPrice(val),
+                    },
+                },
+            },
+        },
+    });
 }
 
 function renderHistogram(hist) {
@@ -81,7 +289,6 @@ function renderOpportunities(opportunites) {
     const container = document.getElementById('opportunities-list');
     if (!container) return;
 
-    // 1. Cas sans aucune donnée pour ces filtres
     if (!opportunites || opportunites.length === 0) {
         container.innerHTML = `
             <div style="padding: 25px 15px; text-align: center; color: #7f8c8d; background: #f8f9fa; border-radius: 8px; border: 1px dashed #bdc3c7;">
@@ -91,7 +298,6 @@ function renderOpportunities(opportunites) {
         return;
     }
 
-    // 2. Vérification de la présence d'opportunités à forte valeur
     const hasRealOpportunities = opportunites.some(o => o.est_opportunite);
     let html = '';
 
@@ -104,7 +310,6 @@ function renderOpportunities(opportunites) {
         `;
     }
 
-    // 3. Construction des cartes
     html += opportunites.map(o => `
         <div class="opp-card ${o.est_opportunite ? 'hot' : ''}"
              ${o.url ? `style="cursor:pointer" data-url="${escapeAttr(o.url)}"` : ''}>
@@ -140,4 +345,11 @@ function renderOpportunities(opportunites) {
             }
         });
     });
+}
+
+function escapeAttr(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;');
 }

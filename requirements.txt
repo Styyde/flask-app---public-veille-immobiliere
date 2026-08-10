@@ -1,5 +1,18 @@
-pandas>=1.5.0
+# ---- Production ----
 Flask>=2.2.0
-PyQt6>=6.4.0
-playwright
-chromium
+pandas>=1.5.0
+prometheus-flask-exporter>=0.22.4
+playwright>=1.40.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+gunicorn>=21.0.0
+python-dotenv>=1.0.0
+Flask-CORS>=4.0.0
+
+# ---- Tests ----
+pytest>=7.0.0
+pytest-flask>=1.2.0
+pytest-cov>=4.0.0
+
+# ---- Desktop (optionnel) ----
+# PyQt6>=6.4.0   # commenté si tu ne build pas la version desktop

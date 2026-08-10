@@ -170,6 +170,19 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_favoris_source ON favoris (source)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_favoris_date ON favoris (date_ajout)")
     
+    # ---- Table Taches (Background Tasks) ----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS taches (
+            id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL,
+            message TEXT,
+            result TEXT,
+            date_creation DATETIME DEFAULT CURRENT_TIMESTAMP,
+            date_fin DATETIME
+        )
+    """)
+    
     conn.commit()
     conn.close()
     print("✅ Base de données initialisée avec succès.")
@@ -605,9 +618,12 @@ def get_annonces_mubawab_filtered(**filters):
         else:
             query += " AND 1=0"
 
+    # --- FILTRE REGION ---
     if 'region' in filters and filters['region']:
         query += " AND region = ?"
         params.append(filters['region'])
+    # --------------------
+
     if 'budget_min' in filters and filters['budget_min'] is not None:
         query += " AND prix >= ?"
         params.append(filters['budget_min'])
@@ -632,7 +648,6 @@ def get_annonces_mubawab_filtered(**filters):
     result = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return result
-
 # ==================== STATISTIQUES GLOBALES ====================
 def get_statistiques_globales():
     conn = get_connection()
@@ -797,3 +812,58 @@ def est_favori(source, annonce_id):
     exists = cursor.fetchone() is not None
     conn.close()
     return exists
+
+# ==================== GESTION DES TACHES ====================
+
+def create_task(task_id, source, initial_message="En attente..."):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO taches (id, source, status, message) 
+        VALUES (?, ?, 'en_cours', ?)
+    """, (task_id, source, initial_message))
+    conn.commit()
+    conn.close()
+
+def update_task_status(task_id, status, message=None, result=None):
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    updates = ["status = ?"]
+    params = [status]
+    
+    if message is not None:
+        updates.append("message = ?")
+        params.append(message)
+    if result is not None:
+        import json
+        updates.append("result = ?")
+        params.append(json.dumps(result))
+        
+    if status in ['termine', 'erreur']:
+        updates.append("date_fin = CURRENT_TIMESTAMP")
+        
+    query = f"UPDATE taches SET {', '.join(updates)} WHERE id = ?"
+    params.append(task_id)
+    
+    cursor.execute(query, params)
+    conn.commit()
+    conn.close()
+
+def get_task_status(task_id):
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM taches WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        d = dict(row)
+        import json
+        if d.get('result'):
+            try:
+                d['result'] = json.loads(d['result'])
+            except:
+                pass
+        return d
+    return None

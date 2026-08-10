@@ -34,22 +34,28 @@ def parse_filtres_from_request(args):
                 return None
         return None
 
+    def _str(key):
+        val = args.get(key)
+        if val is not None and val != '':
+            return val
+        return None
+
     return {
         'source': args.get('source', 'all'),
         'budget_min': _float('budget_min'),
         'budget_max': _float('budget_max'),
-        'ville': args.get('ville') or None,
-        'type_bien': args.get('type_bien') or None,  # normalisé
+        'ville': _str('ville'),
+        'type_bien': _str('type_bien'),
         'prix_m2_min': _float('prix_m2_min'),
         'prix_m2_max': _float('prix_m2_max'),
         'surface_min': _float('surface_min'),
         'surface_max': _float('surface_max'),
         'limit': _int('limit'),
+        'region': _str('region'),   # <---- AJOUT ICI
     }
 
 
 def get_filtres_disponibles(source='all'):
-    # Retourne les types normalisés pour l'UI
     types = get_all_normalized_types()
     return {
         'types': types,
@@ -65,16 +71,11 @@ def _convert_normalized_to_brut_list(normalized_type):
 
 def filtrer_alomrane(**filters):
     f = {k: v for k, v in filters.items() if k != 'source'}
-    # Conversion du type normalisé en liste de types bruts
     if 'type_bien' in f and f['type_bien']:
         brut_list = _convert_normalized_to_brut_list(f['type_bien'])
         if brut_list:
             f['type_brut_list'] = brut_list
-        # on supprime l'ancien type_bien pour éviter confusion
         del f['type_bien']
-    else:
-        # Si aucun type, on ne filtre pas
-        pass
     return get_projets_resume(**f)
 
 
@@ -94,7 +95,7 @@ def filtrer_sarouty(**filters):
         'budget_min': 'budget_min',
         'budget_max': 'budget_max',
         'ville': 'ville',
-        'type_bien': 'type_bien',  # on garde le type normalisé
+        'type_bien': 'type_bien',
         'prix_m2_min': 'prix_m2_min',
         'prix_m2_max': 'prix_m2_max',
         'surface_min': 'superficie_min',
@@ -125,7 +126,7 @@ def filtrer_sarouty(**filters):
             'property_id': row.get('property_id'),
             'projet': row.get('titre'),
             'localisation': localisation,
-            'type': row.get('type_bien'),  # type brut
+            'type': row.get('type_bien'),
             'surface': row.get('superficie'),
             'prix': prix,
             'prix_affichage': prix_affichage,
@@ -147,16 +148,11 @@ def filtrer_mubawab(**filters):
         'prix_m2_max': 'prix_m2_max',
         'surface_min': 'superficie_min',
         'surface_max': 'superficie_max',
-        'region': 'region',   # déjà présent dans le mapping
+        'region': 'region',   # <---- GARDER CETTE LIGNE (déjà présente, mais on s'assure)
     }
     for src, dst in mapping.items():
         if filters.get(src) is not None:
             mubawab_filters[dst] = filters[src]
-
-    # --- AJOUT EXPLICITE pour s'assurer que 'region' est bien transmis ---
-    if filters.get('region'):
-        mubawab_filters['region'] = filters['region']
-    # -------------------------------------------------------------------
 
     rows = get_annonces_mubawab_filtered(**mubawab_filters)
     result = []
@@ -179,6 +175,7 @@ def filtrer_mubawab(**filters):
         result.append(annonce)
     return result
 
+
 def filtrer_produits(**filters):
     conn = sqlite3.connect(DB_PATH)
     query = """
@@ -194,7 +191,7 @@ def filtrer_produits(**filters):
             pr.no_produit AS produit,
             pr.surface,
             pr.prix,
-            NULL AS url_produit,
+            NULL AS url_produit,   -- colonne corrigée (remplace pr.url qui n'existe pas)
             ROUND(
                 CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) /
                 NULLIF(CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL), 0),

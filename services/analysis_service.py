@@ -6,6 +6,7 @@ from collections import defaultdict
 
 from .filter_service import filtrer_produits, filtrer_sarouty, filtrer_mubawab
 from .type_mapping import get_normalized_type
+from .data_sanitizer import filter_for_stats
 from analytics.scorer import calculer_opportunites_sur_donnees, annoter_opportunites_sur_donnees
 
 logger = logging.getLogger(__name__)
@@ -156,8 +157,8 @@ def get_analytics_dashboard(filtres=None):
         valid_data = [d for d in valid_data if d['prix_m2'] <= prix_m2_max]
         logger.debug(f"Filtrage prix_m2_max <= {prix_m2_max} : {before} -> {len(valid_data)}")
 
-    # 5. Garder uniquement les entrées avec prix_m2 valide (> 0)
-    valid_data = [d for d in valid_data if d.get('prix_m2') and d['prix_m2'] > 0]
+    # 5. Exclusion des annonces avec prix ou prix/m² nuls (Règle 2 : data_sanitizer)
+    valid_data = filter_for_stats(valid_data)
     logger.debug(f"Données finales après tous les filtres : {len(valid_data)}")
 
     if not valid_data:

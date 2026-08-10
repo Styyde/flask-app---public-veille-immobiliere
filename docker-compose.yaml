@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: veille_immo_api
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data   # Persistance de la base SQLite
+    environment:
+      - DB_PATH=/app/data/alomrane.db
+      - FLASK_ENV=production
+    restart: unless-stopped

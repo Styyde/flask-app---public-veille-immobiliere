@@ -233,13 +233,51 @@ function showStatus(msg, type = 'info') {
     el.classList.remove('hidden');
 }
 
+async function pollTask(taskId, btn, successMessageBuilder) {
+    const interval = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/scraper/status/${taskId}`);
+            const data = await res.json();
+            
+            if (data.error) {
+                clearInterval(interval);
+                showStatus(`❌ ${data.error}`, 'error');
+                btn.disabled = false;
+                return;
+            }
+            
+            if (data.status === 'en_cours') {
+                showStatus(`⏳ ${data.message || 'En cours...'}`, 'info');
+            } else if (data.status === 'termine') {
+                clearInterval(interval);
+                let msg = data.message;
+                if (successMessageBuilder && data.result) {
+                    msg = successMessageBuilder(data.result);
+                }
+                showStatus(`✅ ${msg}`, 'success');
+                btn.disabled = false;
+                await loadStats();
+                await search();
+            } else if (data.status === 'erreur') {
+                clearInterval(interval);
+                showStatus(`❌ ${data.message}`, 'error');
+                btn.disabled = false;
+            }
+        } catch (err) {
+            clearInterval(interval);
+            showStatus(`❌ Erreur de connexion: ${err.message}`, 'error');
+            btn.disabled = false;
+        }
+    }, 2000);
+}
+
 async function scrapeAlomrane() {
     const regionId = document.getElementById('region_select').value;
     const btn = document.getElementById('btn-scrape-ao');
     if (!regionId) { alert('Veuillez sélectionner une région.'); return; }
 
     btn.disabled = true;
-    showStatus('Scraping Al Omrane en cours…', 'info');
+    showStatus('Démarrage Scraping Al Omrane...', 'info');
 
     try {
         const data = await fetch('/api/scraper', {
@@ -249,12 +287,9 @@ async function scrapeAlomrane() {
         }).then(r => r.json());
 
         if (data.error) throw new Error(data.error);
-        showStatus(`✅ ${data.nouveaux_projets} nouveaux projets trouvés.`, 'success');
-        await loadStats();
-        await search();
+        pollTask(data.task_id, btn, (res) => `${res.length} nouveaux projets trouvés.`);
     } catch (err) {
         showStatus(`❌ ${err.message}`, 'error');
-    } finally {
         btn.disabled = false;
     }
 }
@@ -262,7 +297,7 @@ async function scrapeAlomrane() {
 async function scrapeSarouty() {
     const btn = document.getElementById('btn-scrape-sar');
     btn.disabled = true;
-    showStatus('Scraping Sarouty en cours… (max 5 pages)', 'info');
+    showStatus('Démarrage Scraping Sarouty...', 'info');
 
     try {
         const data = await fetch('/api/scraper_sarouty', {
@@ -276,12 +311,9 @@ async function scrapeSarouty() {
         }).then(r => r.json());
 
         if (data.error) throw new Error(data.error);
-        showStatus(`✅ ${data.nouveaux} nouvelles annonces Sarouty.`, 'success');
-        await loadStats();
-        await search();
+        pollTask(data.task_id, btn, (res) => `${res} nouvelles annonces Sarouty.`);
     } catch (err) {
         showStatus(`❌ ${err.message}`, 'error');
-    } finally {
         btn.disabled = false;
     }
 }
@@ -290,7 +322,7 @@ async function scrapeMubawab() {
     const btn = document.getElementById('btn-scrape-mub');
     const region = document.getElementById('region_mubawab').value;
     btn.disabled = true;
-    showStatus(`Scraping Mubawab (${region}) en cours… (max 3 pages)`, 'info');
+    showStatus(`Démarrage Scraping Mubawab (${region})...`, 'info');
 
     try {
         const data = await fetch('/api/scraper_mubawab', {
@@ -300,13 +332,35 @@ async function scrapeMubawab() {
         }).then(r => r.json());
 
         if (data.error) throw new Error(data.error);
-        showStatus(`✅ ${data.nouveaux} nouvelles annonces Mubawab.`, 'success');
-        await loadStats();
-        setActiveTab('mubawab');
-        await search();
+        
+        // Custom polling callback to switch tab for mubawab
+        const interval = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/scraper/status/${data.task_id}`);
+                const statusData = await res.json();
+                if (statusData.status === 'en_cours') {
+                    showStatus(`⏳ ${statusData.message || 'En cours...'}`, 'info');
+                } else if (statusData.status === 'termine') {
+                    clearInterval(interval);
+                    showStatus(`✅ ${statusData.result || 0} nouvelles annonces Mubawab.`, 'success');
+                    btn.disabled = false;
+                    await loadStats();
+                    setActiveTab('mubawab');
+                    await search();
+                } else if (statusData.status === 'erreur') {
+                    clearInterval(interval);
+                    showStatus(`❌ ${statusData.message}`, 'error');
+                    btn.disabled = false;
+                }
+            } catch (err) {
+                clearInterval(interval);
+                showStatus(`❌ Erreur: ${err.message}`, 'error');
+                btn.disabled = false;
+            }
+        }, 2000);
+        
     } catch (err) {
         showStatus(`❌ ${err.message}`, 'error');
-    } finally {
         btn.disabled = false;
     }
 }

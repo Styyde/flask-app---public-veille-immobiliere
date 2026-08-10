@@ -7,7 +7,7 @@ import asyncio
 import nodriver as uc
 
 from config import REGIONS, TYPES_BIENS, HEADLESS, LIMITE_PAGES, BASE_URL, MAX_PAGES_PAR_LOT
-from scraper.core import scrape_combination
+from core.core import scrape_combination
 
 async def run_full_scraping(headless=HEADLESS, limit_pages=LIMITE_PAGES, base_url=BASE_URL, deep_scrape=False):
     """

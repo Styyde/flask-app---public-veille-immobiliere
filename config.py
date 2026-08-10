@@ -1,5 +1,6 @@
 # config.py
 # Configuration centrale pour l'application Al Omrane Analyzer
+import os
 
 # URLs de base
 BASE_URL = "https://www.alomrane.gov.ma/Nos-produits/Projets"
@@ -30,8 +31,10 @@ HEADLESS = True          # Mettre True pour le mode silencieux (planificateur)
 LIMITE_PAGES = None       # None pour tout scraper, ou un entier (ex: 2)
 DELAI_ENTRE_PAGES = 2     # Secondes d'attente entre les pages
 MAX_PAGES_PAR_LOT = 3
-# Base de données (pour la prochaine étape)
-DB_PATH = "alomrane.db"
+
+# Base de données : utilise la variable d'environnement DB_PATH si définie, sinon "alomrane.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.environ.get('DB_PATH', os.path.join(BASE_DIR, 'alomrane.db'))
 
 # ---- Mubawab ----
 MUBAWAB_REGIONS = {

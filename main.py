@@ -9,7 +9,7 @@ def main():
     args = parser.parse_args()
     
     if args.mode == 'web':
-        from api import app
+        from api.app import app
         app.run(debug=True, host='0.0.0.0', port=5000)
     else:
         from gui import run_gui

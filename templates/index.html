@@ -104,6 +104,9 @@
             <button type="button" class="tab" data-tab="favoris">
                 ⭐ Favoris <span id="count-fav" class="tab-count">0</span>
             </button>
+            <button type="button" class="tab" data-tab="evolution">
+                📈 Évolution
+            </button>
         </div>
 
         <div id="tab-alomrane" class="tab-content active">
@@ -177,6 +180,44 @@
                 </table>
             </div>
         </div>
+
+        <div id="tab-evolution" class="tab-content">
+            <div class="filters-row">
+                <label>Granularité</label>
+                <select id="evo_granularite">
+                    <option value="run">Par campagne de scraping</option>
+                    <option value="jour">Par jour</option>
+                    <option value="semaine">Par semaine</option>
+                    <option value="mois">Par mois</option>
+                </select>
+
+                <label>Du</label>
+                <input type="date" id="evo_date_from">
+                <label>Au</label>
+                <input type="date" id="evo_date_to">
+
+                <button type="button" id="btn-evo-refresh" class="btn btn-primary">Actualiser</button>
+            </div>
+            <div id="evo-types-filter" class="evo-types-filter"></div>
+
+            <div class="charts-grid">
+                <div class="chart-card chart-card-wide">
+                    <h3>Évolution du prix/m² (par type × zone)</h3>
+                    <div class="scatter-canvas-wrap">
+                        <canvas id="chart-evolution-prix"></canvas>
+                        <p id="evo-prix-empty" class="chart-empty hidden">Pas encore assez d'historique pour ces filtres — relancez un scraping dans quelques semaines.</p>
+                    </div>
+                </div>
+                <div class="chart-card chart-card-wide">
+                    <h3>Évolution du nombre d'annonces (par type × zone)</h3>
+                    <div class="scatter-canvas-wrap">
+                        <canvas id="chart-evolution-nb"></canvas>
+                        <p id="evo-nb-empty" class="chart-empty hidden">Pas encore assez d'historique pour ces filtres — relancez un scraping dans quelques semaines.</p>
+                    </div>
+                </div>
+            </div>
+            <p class="chart-hint">Zones suivies : Casablanca, Rabat, Souissi. Chaque scraping manuel ajoute un nouveau point à l'historique.</p>
+        </div>
     </section>
 
     <section class="panel analytics-panel">
@@ -215,6 +256,7 @@
 <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tables.js') }}"></script>
 <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/trends.js') }}"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

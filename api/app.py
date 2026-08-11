@@ -34,10 +34,12 @@ from services.filter_service import (
     get_prix_m2_moyen_par_groupe,
 )
 from services.analysis_service import get_analytics_dashboard
+from api.trends_routes import trends_bp
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 app = Flask(__name__, template_folder=os.path.join(base_dir, 'templates'), static_folder=os.path.join(base_dir, 'static'))
 init_db()
+app.register_blueprint(trends_bp)
 
 # ---- AJOUT : Métriques Prometheus ----
 metrics = PrometheusMetrics(app, group_by='endpoint')

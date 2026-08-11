@@ -15,4 +15,6 @@ pytest-flask>=1.2.0
 pytest-cov>=4.0.0
 
 # ---- Desktop (optionnel) ----
-# PyQt6>=6.4.0   # commenté si tu ne build pas la version desktop
+# Requis pour `py main.py --mode desktop` : fenêtre native affichant l'UI web (toujours à jour).
+PyQt6>=6.4.0
+PyQt6-WebEngine>=6.4.0

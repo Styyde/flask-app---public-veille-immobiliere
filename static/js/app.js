@@ -38,6 +38,8 @@ function initTabs() {
             document.getElementById(`tab-${activeTab}`).classList.add('active');
             if (activeTab === 'favoris') {
                 loadFavoris();
+            } else if (activeTab === 'evolution' && typeof initEvolutionTab === 'function') {
+                initEvolutionTab();
             }
         });
     });

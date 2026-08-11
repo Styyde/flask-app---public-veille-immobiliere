@@ -182,7 +182,39 @@ def init_db():
             date_fin DATETIME
         )
     """)
-    
+
+    # ---- Suivi historique (évolution dans le temps) ----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS scrape_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            finished_at DATETIME,
+            statut TEXT DEFAULT 'en_cours',
+            nb_annonces INTEGER DEFAULT 0
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS listing_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scrape_run_id INTEGER,
+            source TEXT NOT NULL,
+            listing_key TEXT NOT NULL,
+            type_bien TEXT,
+            ville TEXT,
+            quartier TEXT,
+            surface REAL,
+            prix REAL,
+            prix_m2 REAL,
+            scraped_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (scrape_run_id) REFERENCES scrape_runs (id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_date ON listing_snapshots (scraped_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_group ON listing_snapshots (type_bien, ville)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_key ON listing_snapshots (source, listing_key)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_run ON listing_snapshots (scrape_run_id)")
+
     conn.commit()
     conn.close()
     print("✅ Base de données initialisée avec succès.")
@@ -260,29 +292,52 @@ def get_villes_by_source(source):
     conn.close()
     return villes
 
-def save_projets(projets_list):
+def save_projets(projets_list, scrape_run_id=None):
     if not projets_list:
         return 0
+    own_run = scrape_run_id is None
+    if own_run:
+        scrape_run_id = start_scrape_run('alomrane')
     conn = get_connection()
     cursor = conn.cursor()
     inserted = 0
+    snapshot_rows = []
     try:
         cursor.execute("BEGIN TRANSACTION")
         for projet in projets_list:
-            cursor.execute("""
-                INSERT OR IGNORE INTO projets 
-                (url, region, type_bien, titre, localisation, titre_foncier, description)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                projet.get('lien', ''),
-                projet.get('region', ''),
-                projet.get('type_bien', ''),
-                projet.get('titre', ''),
-                projet.get('localisation', ''),
-                projet.get('titre_foncier', ''),
-                projet.get('description', '')
-            ))
-            if cursor.rowcount > 0:
+            url = projet.get('lien', '')
+            cursor.execute("SELECT id FROM projets WHERE url = ?", (url,))
+            existing = cursor.fetchone()
+
+            if existing:
+                projet_id = existing[0]
+                cursor.execute("""
+                    UPDATE projets SET region = ?, type_bien = ?, titre = ?, localisation = ?,
+                        titre_foncier = ?, description = ?
+                    WHERE id = ?
+                """, (
+                    projet.get('region', ''),
+                    projet.get('type_bien', ''),
+                    projet.get('titre', ''),
+                    projet.get('localisation', ''),
+                    projet.get('titre_foncier', ''),
+                    projet.get('description', ''),
+                    projet_id
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO projets
+                    (url, region, type_bien, titre, localisation, titre_foncier, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    url,
+                    projet.get('region', ''),
+                    projet.get('type_bien', ''),
+                    projet.get('titre', ''),
+                    projet.get('localisation', ''),
+                    projet.get('titre_foncier', ''),
+                    projet.get('description', '')
+                ))
                 inserted += 1
                 projet_id = cursor.lastrowid
                 for lot in projet.get('lots', []):
@@ -307,11 +362,37 @@ def save_projets(projets_list):
                             ligne.get('surface', ''),
                             ligne.get('prix', '')
                         ))
+
+            # Snapshot : capture l'état courant des produits de ce projet pour cette campagne
+            cursor.execute("""
+                SELECT pr.no_produit, pr.surface, pr.prix
+                FROM produits pr JOIN lots l ON l.id = pr.lot_id
+                WHERE l.projet_id = ?
+            """, (projet_id,))
+            ville = projet.get('localisation', '')
+            type_bien = projet.get('type_bien', '')
+            for no_produit, surface, prix in cursor.fetchall():
+                snapshot_rows.append({
+                    'source': 'alomrane',
+                    'listing_key': f"{url}::{no_produit}",
+                    'type_bien': type_bien,
+                    'ville': ville,
+                    'quartier': None,
+                    'surface': _clean_numeric(surface, 'm²'),
+                    'prix': _clean_numeric(prix, 'DH'),
+                    'prix_m2': _parse_prix_m2(prix, surface),
+                })
+
+        _insert_snapshots(cursor, scrape_run_id, snapshot_rows)
         conn.commit()
         print(f"💾 {inserted} projets Al Omrane insérés.")
+        if own_run:
+            finish_scrape_run(scrape_run_id, 'succes', inserted)
     except Exception as e:
         conn.rollback()
         print(f"❌ Erreur insertion Al Omrane : {e}")
+        if own_run:
+            finish_scrape_run(scrape_run_id, 'erreur', inserted)
     finally:
         conn.close()
     return inserted
@@ -325,6 +406,86 @@ def _parse_prix_m2(prix_str, surface_str):
     except (TypeError, ValueError):
         pass
     return None
+
+def _clean_numeric(val, unit=None):
+    """Convertit une valeur texte (ex: '720 000 DH', '120 m²') en float, ou None."""
+    if val is None:
+        return None
+    try:
+        s = str(val)
+        if unit:
+            s = s.replace(unit, '')
+        s = s.replace('\xa0', '').replace(' ', '').strip()
+        return float(s) if s else None
+    except (TypeError, ValueError):
+        return None
+
+# ==================== HISTORIQUE (scrape_runs / listing_snapshots) ====================
+
+def start_scrape_run(source):
+    """Ouvre une nouvelle campagne de scraping et retourne son id."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO scrape_runs (source, statut) VALUES (?, 'en_cours')", (source,))
+    run_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return run_id
+
+def finish_scrape_run(run_id, statut='succes', nb_annonces=0):
+    """Clôture une campagne de scraping avec son statut final."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE scrape_runs SET statut = ?, nb_annonces = ?, finished_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (statut, nb_annonces, run_id))
+    conn.commit()
+    conn.close()
+
+def _insert_snapshots(cursor, scrape_run_id, rows):
+    """Insère un lot de lignes dans listing_snapshots (dans la transaction/cursor en cours)."""
+    if not rows:
+        return
+    cursor.executemany("""
+        INSERT INTO listing_snapshots
+        (scrape_run_id, source, listing_key, type_bien, ville, quartier, surface, prix, prix_m2)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, [
+        (
+            scrape_run_id, r['source'], r['listing_key'], r.get('type_bien'),
+            r.get('ville'), r.get('quartier'), r.get('surface'), r.get('prix'), r.get('prix_m2'),
+        )
+        for r in rows
+    ])
+
+def get_snapshots(date_from=None, date_to=None, villes=None):
+    """Retourne les lignes de listing_snapshots, optionnellement filtrées par période/villes."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    query = """
+        SELECT ls.scraped_at, ls.scrape_run_id, ls.source, ls.listing_key, ls.type_bien,
+               ls.ville, ls.quartier, ls.surface, ls.prix, ls.prix_m2, sr.started_at AS run_started_at
+        FROM listing_snapshots ls
+        LEFT JOIN scrape_runs sr ON sr.id = ls.scrape_run_id
+        WHERE 1=1
+    """
+    params = []
+    if villes:
+        placeholders = ','.join(['?'] * len(villes))
+        query += f" AND ls.ville IN ({placeholders})"
+        params.extend(villes)
+    if date_from:
+        query += " AND date(ls.scraped_at) >= date(?)"
+        params.append(date_from)
+    if date_to:
+        query += " AND date(ls.scraped_at) <= date(?)"
+        params.append(date_to)
+    cursor.execute(query, params)
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return rows
 
 def _enrich_produit(prod):
     row = dict(prod)
@@ -452,21 +613,43 @@ def get_all_projets(limit=100):
     return projets
 
 # ==================== SAROUTY ====================
-def save_annonces_sarouty(annonces_list):
+def save_annonces_sarouty(annonces_list, scrape_run_id=None):
     if not annonces_list:
         return 0
+    own_run = scrape_run_id is None
+    if own_run:
+        scrape_run_id = start_scrape_run('sarouty')
     conn = get_connection()
     cursor = conn.cursor()
     inserted = 0
+    snapshot_rows = []
     try:
         cursor.execute("BEGIN TRANSACTION")
         for a in annonces_list:
+            property_id = a.get('property_id')
+            if property_id is None:
+                continue
+
+            cursor.execute("SELECT 1 FROM annonces_sarouty WHERE property_id = ?", (property_id,))
+            is_new = cursor.fetchone() is None
+
             cursor.execute("""
-                INSERT OR IGNORE INTO annonces_sarouty 
+                INSERT INTO annonces_sarouty
                 (property_id, url_annonce, titre, description, prix, superficie, chambres, salles_de_bain, type_bien, quartier, ville)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(property_id) DO UPDATE SET
+                    url_annonce = excluded.url_annonce,
+                    titre = excluded.titre,
+                    description = excluded.description,
+                    prix = excluded.prix,
+                    superficie = excluded.superficie,
+                    chambres = excluded.chambres,
+                    salles_de_bain = excluded.salles_de_bain,
+                    type_bien = excluded.type_bien,
+                    quartier = excluded.quartier,
+                    ville = excluded.ville
             """, (
-                a.get('property_id'),
+                property_id,
                 a.get('url_annonce'),
                 a.get('titre'),
                 a.get('description'),
@@ -478,13 +661,32 @@ def save_annonces_sarouty(annonces_list):
                 a.get('quartier'),
                 a.get('ville')
             ))
-            if cursor.rowcount > 0:
+            if is_new:
                 inserted += 1
+
+            prix = a.get('prix') or 0
+            superficie = a.get('superficie') or 0
+            snapshot_rows.append({
+                'source': 'sarouty',
+                'listing_key': str(property_id),
+                'type_bien': a.get('type_bien'),
+                'ville': a.get('ville'),
+                'quartier': a.get('quartier'),
+                'surface': superficie or None,
+                'prix': prix or None,
+                'prix_m2': round(prix / superficie, 2) if superficie else None,
+            })
+
+        _insert_snapshots(cursor, scrape_run_id, snapshot_rows)
         conn.commit()
         print(f"💾 {inserted} annonces Sarouty insérées.")
+        if own_run:
+            finish_scrape_run(scrape_run_id, 'succes', inserted)
     except Exception as e:
         conn.rollback()
         print(f"❌ Erreur insertion Sarouty : {e}")
+        if own_run:
+            finish_scrape_run(scrape_run_id, 'erreur', inserted)
     finally:
         conn.close()
     return inserted
@@ -548,37 +750,82 @@ def get_annonces_sarouty_filtered(**filters):
     return result
 
 # ==================== MUBAWAB ====================
-def save_annonces_mubawab(annonces_list):
+def save_annonces_mubawab(annonces_list, scrape_run_id=None):
     if not annonces_list:
         return 0
+    own_run = scrape_run_id is None
+    if own_run:
+        scrape_run_id = start_scrape_run('mubawab')
     conn = get_connection()
     cursor = conn.cursor()
     inserted = 0
+    snapshot_rows = []
     try:
         cursor.execute("BEGIN TRANSACTION")
         for a in annonces_list:
+            url_annonce = a.get('url_annonce') or a.get('url')
+            if not url_annonce:
+                continue
+
+            cursor.execute("SELECT 1 FROM annonces_mubawab WHERE url_annonce = ?", (url_annonce,))
+            is_new = cursor.fetchone() is None
+
+            prix = a.get('prix', 0)
+            superficie = a.get('superficie') if a.get('superficie') is not None else a.get('surface', 0)
+            type_bien = a.get('type_bien')
+            localisation = a.get('localisation') or a.get('location')
+            ville = a.get('ville')
+
             cursor.execute("""
-                INSERT OR IGNORE INTO annonces_mubawab
+                INSERT INTO annonces_mubawab
                 (url_annonce, titre, description, prix, superficie, type_bien, localisation, ville, region)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(url_annonce) DO UPDATE SET
+                    titre = excluded.titre,
+                    description = excluded.description,
+                    prix = excluded.prix,
+                    superficie = excluded.superficie,
+                    type_bien = excluded.type_bien,
+                    localisation = excluded.localisation,
+                    ville = excluded.ville,
+                    region = excluded.region
             """, (
-                a.get('url_annonce') or a.get('url'),
+                url_annonce,
                 a.get('titre') or a.get('title'),
                 a.get('description'),
-                a.get('prix', 0),
-                a.get('superficie') if a.get('superficie') is not None else a.get('surface', 0),
-                a.get('type_bien'),
-                a.get('localisation') or a.get('location'),
-                a.get('ville'),
+                prix,
+                superficie,
+                type_bien,
+                localisation,
+                ville,
                 a.get('region'),
             ))
-            if cursor.rowcount > 0:
+            if is_new:
                 inserted += 1
+
+            prix = prix or 0
+            superficie = superficie or 0
+            snapshot_rows.append({
+                'source': 'mubawab',
+                'listing_key': url_annonce,
+                'type_bien': type_bien,
+                'ville': ville,
+                'quartier': localisation,
+                'surface': superficie or None,
+                'prix': prix or None,
+                'prix_m2': round(prix / superficie, 2) if superficie else None,
+            })
+
+        _insert_snapshots(cursor, scrape_run_id, snapshot_rows)
         conn.commit()
         print(f"💾 {inserted} annonces Mubawab insérées.")
+        if own_run:
+            finish_scrape_run(scrape_run_id, 'succes', inserted)
     except Exception as e:
         conn.rollback()
         print(f"❌ Erreur insertion Mubawab : {e}")
+        if own_run:
+            finish_scrape_run(scrape_run_id, 'erreur', inserted)
     finally:
         conn.close()
     return inserted

@@ -729,6 +729,30 @@ input:focus, select:focus {
     display: none;
 }
 
+.evo-types-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0 18px;
+}
+
+.evo-type-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.82rem;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.evo-type-chip input {
+    margin: 0;
+}
+
 .opportunities-section h3 {
     font-size: 0.95rem;
     color: var(--muted);

@@ -36,6 +36,15 @@ MAX_PAGES_PAR_LOT = 3
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get('DB_PATH', os.path.join(BASE_DIR, 'alomrane.db'))
 
+# ---- Suivi de l'évolution dans le temps ----
+# Zones surveillées pour le tableau de bord d'évolution (prix/m², nombre d'annonces).
+# Un quartier peut être isolé de sa ville-mère en le déclarant explicitement (ex: Souissi vs Rabat).
+ZONES_SUIVIES = [
+    {"label": "Casablanca", "ville": "Casablanca"},
+    {"label": "Rabat", "ville": "Rabat"},
+    {"label": "Souissi", "ville": "Rabat", "quartier": "Souissi"},
+]
+
 # ---- Mubawab ----
 MUBAWAB_REGIONS = {
     "casablanca": {

@@ -1,15 +1,14 @@
 # services/location_service.py
-import sqlite3
-from config import DB_PATH
+from sqlalchemy import select
+
+from database.models import AnnonceMubawab, AnnonceSarouty, Projet
+from database.session import session_scope
 
 def get_location_hierarchy():
     """
-    Extrait dynamiquement la hiérarchie des régions/villes et quartiers 
+    Extrait dynamiquement la hiérarchie des régions/villes et quartiers
     à partir des 3 tables (projets, annonces_sarouty, annonces_mubawab).
     """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
     hierarchy = {}
 
     def add_to_hierarchy(parent, child):
@@ -23,38 +22,35 @@ def get_location_hierarchy():
             hierarchy[parent] = set()
         hierarchy[parent].add(child)
 
-    # 1. Al Omrane (region -> localisation)
-    try:
-        cursor.execute("SELECT region, localisation FROM projets WHERE region IS NOT NULL AND localisation IS NOT NULL")
-        for region, loc in cursor.fetchall():
+    with session_scope() as session:
+        # 1. Al Omrane (region -> localisation)
+        rows = session.execute(
+            select(Projet.region, Projet.localisation)
+            .where(Projet.region.isnot(None), Projet.localisation.isnot(None))
+        )
+        for region, loc in rows:
             add_to_hierarchy(region, loc)
-    except sqlite3.OperationalError:
-        pass
 
-    # 2. Mubawab (region -> ville, ville -> localisation)
-    try:
-        cursor.execute("SELECT region, ville, localisation FROM annonces_mubawab")
-        for region, ville, loc in cursor.fetchall():
+        # 2. Mubawab (region -> ville, ville -> localisation)
+        rows = session.execute(
+            select(AnnonceMubawab.region, AnnonceMubawab.ville, AnnonceMubawab.localisation)
+        )
+        for region, ville, loc in rows:
             add_to_hierarchy(region, ville)
             if loc and ville and loc != ville:
                 # loc is often 'Quartier' or 'Quartier à Ville', but we cleaned 'à Ville' already
                 add_to_hierarchy(ville, loc)
-    except sqlite3.OperationalError:
-        pass
 
-    # 3. Sarouty (ville -> quartier)
-    try:
-        cursor.execute("SELECT ville, quartier FROM annonces_sarouty WHERE ville IS NOT NULL AND quartier IS NOT NULL")
-        for ville, quartier in cursor.fetchall():
+        # 3. Sarouty (ville -> quartier)
+        rows = session.execute(
+            select(AnnonceSarouty.ville, AnnonceSarouty.quartier)
+            .where(AnnonceSarouty.ville.isnot(None), AnnonceSarouty.quartier.isnot(None))
+        )
+        for ville, quartier in rows:
             add_to_hierarchy(ville, quartier)
-    except sqlite3.OperationalError:
-        pass
-
-    conn.close()
 
     # Convert sets to sorted lists
-    result = {k: sorted(list(v)) for k, v in hierarchy.items() if v}
-    return result
+    return {k: sorted(list(v)) for k, v in hierarchy.items() if v}
 
 def get_all_sublocations_for(location_name):
     """
@@ -64,16 +60,16 @@ def get_all_sublocations_for(location_name):
     """
     if not location_name:
         return []
-        
+
     hierarchy = get_location_hierarchy()
     sub_locations = set()
-    
+
     def traverse(node):
         if node in hierarchy:
             for child in hierarchy[node]:
                 if child not in sub_locations:
                     sub_locations.add(child)
                     traverse(child)
-                    
+
     traverse(location_name)
     return list(sub_locations)

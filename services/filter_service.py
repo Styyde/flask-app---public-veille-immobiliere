@@ -1,7 +1,7 @@
 # services/filter_service.py
-import sqlite3
 import pandas as pd
-from config import DB_PATH
+from sqlalchemy import false, literal, null, select
+
 from database.db_manager import (
     get_annonces_sarouty_filtered,
     get_annonces_mubawab_filtered,
@@ -11,6 +11,9 @@ from database.db_manager import (
     get_statistiques_globales,
     get_prix_m2_stats,
 )
+from database.engine import get_engine
+from database.expressions import clean_numeric_col, prix_m2_expr
+from database.models import Lot, Produit, Projet
 from .type_mapping import get_brut_types_for_normalized, get_all_normalized_types
 from .data_sanitizer import sanitize_annonce_for_display
 
@@ -180,70 +183,56 @@ def filtrer_mubawab(**filters):
     return result
 
 def filtrer_produits(**filters):
-    conn = sqlite3.connect(DB_PATH)
-    query = """
-        SELECT
-            p.id AS projet_id,
-            pr.id AS produit_id,
-            p.titre AS projet,
-            p.localisation AS ville,
-            p.region,
-            p.type_bien,
-            p.url AS url_projet,
-            l.lot_titre AS lot,
-            pr.no_produit AS produit,
-            pr.surface,
-            pr.prix,
-            NULL AS url_produit,
-            ROUND(
-                CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) /
-                NULLIF(CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL), 0),
-                2
-            ) AS prix_m2,
-            'Al Omrane' AS source
-        FROM produits pr
-        JOIN lots l ON l.id = pr.lot_id
-        JOIN projets p ON p.id = l.projet_id
-        WHERE CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) > 0
-    """
-    params = []
+    prix_clean = clean_numeric_col(Produit.prix, 'DH')
+    surface_clean = clean_numeric_col(Produit.surface, 'm²')
+    pm2 = prix_m2_expr(Produit.prix, Produit.surface).label('prix_m2')
+
+    stmt = (
+        select(
+            Projet.id.label('projet_id'),
+            Produit.id.label('produit_id'),
+            Projet.titre.label('projet'),
+            Projet.localisation.label('ville'),
+            Projet.region,
+            Projet.type_bien,
+            Projet.url.label('url_projet'),
+            Lot.lot_titre.label('lot'),
+            Produit.no_produit.label('produit'),
+            Produit.surface,
+            Produit.prix,
+            null().label('url_produit'),
+            pm2,
+            literal('Al Omrane').label('source'),
+        )
+        .select_from(Produit)
+        .join(Lot, Lot.id == Produit.lot_id)
+        .join(Projet, Projet.id == Lot.projet_id)
+        .where(prix_clean > 0)
+    )
+
     if filters.get('budget_min') is not None:
-        query += " AND CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) >= ?"
-        params.append(filters['budget_min'])
+        stmt = stmt.where(prix_clean >= filters['budget_min'])
     if filters.get('budget_max') is not None:
-        query += " AND CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) <= ?"
-        params.append(filters['budget_max'])
+        stmt = stmt.where(prix_clean <= filters['budget_max'])
     if filters.get('ville'):
-        query += " AND p.localisation = ?"
-        params.append(filters['ville'])
+        stmt = stmt.where(Projet.localisation == filters['ville'])
     if filters.get('type_bien'):
         from .type_mapping import get_brut_types_for_normalized
         brut_list = get_brut_types_for_normalized(filters['type_bien'])
-        if brut_list:
-            placeholders = ','.join(['?'] * len(brut_list))
-            query += f" AND p.type_bien IN ({placeholders})"
-            params.extend(brut_list)
-        else:
-            query += " AND 1=0"
+        stmt = stmt.where(Projet.type_bien.in_(brut_list)) if brut_list else stmt.where(false())
     if filters.get('prix_m2_min') is not None:
-        query += " AND prix_m2 >= ?"
-        params.append(filters['prix_m2_min'])
+        stmt = stmt.where(pm2 >= filters['prix_m2_min'])
     if filters.get('prix_m2_max') is not None:
-        query += " AND prix_m2 <= ?"
-        params.append(filters['prix_m2_max'])
+        stmt = stmt.where(pm2 <= filters['prix_m2_max'])
     if filters.get('surface_min') is not None:
-        query += " AND CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL) >= ?"
-        params.append(filters['surface_min'])
+        stmt = stmt.where(surface_clean >= filters['surface_min'])
     if filters.get('surface_max') is not None:
-        query += " AND CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL) <= ?"
-        params.append(filters['surface_max'])
-    query += " ORDER BY prix_m2 ASC"
+        stmt = stmt.where(surface_clean <= filters['surface_max'])
+    stmt = stmt.order_by(pm2.asc())
     if filters.get('limit'):
-        query += " LIMIT ?"
-        params.append(filters['limit'])
+        stmt = stmt.limit(filters['limit'])
 
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
+    df = pd.read_sql_query(stmt, get_engine())
     if df.empty:
         return []
     records = df.where(pd.notnull(df), None).to_dict(orient='records')

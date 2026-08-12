@@ -3,12 +3,13 @@ import asyncio
 import traceback
 import uuid
 import os
-import sqlite3
 
 from flask import Flask, request, jsonify, render_template
 from prometheus_flask_exporter import PrometheusMetrics
+from sqlalchemy import text
 
-from config import REGIONS, DB_PATH
+from config import REGIONS
+from database.engine import get_engine
 from core.runner import scrape_regions
 from core.sarouty import scraper_sarouty
 from core.mubawab_scraper_single import scraper_mubawab_sync
@@ -56,9 +57,8 @@ def health_check():
         'version': '1.0.0'
     }
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute('SELECT 1')
-        conn.close()
+        with get_engine().connect() as conn:
+            conn.execute(text('SELECT 1'))
     except Exception as e:
         status['status'] = 'unhealthy'
         status['database'] = f'error: {str(e)}'

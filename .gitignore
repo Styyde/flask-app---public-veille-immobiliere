@@ -1,0 +1,77 @@
+# ============================================
+#  BASE DE DONNÉES LOCALE
+# ============================================
+*.db
+*.sqlite3
+*.sqlite
+
+# ============================================
+#  CACHE PYTHON
+# ============================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ============================================
+#  TESTS ET COUVERTURE
+# ============================================
+.pytest_cache/
+.coverage
+.coveragerc
+htmlcov/
+.tox/
+.mypy_cache/
+
+# ============================================
+#  ENVIRONNEMENT ET SECRETS
+# ============================================
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# ============================================
+#  LOGS
+# ============================================
+*.log
+
+# ============================================
+#  DOSSIERS EXCLUS DU DÉPÔT APPLICATION
+#  (ils vont dans d'autres dépôts ou ne sont pas versionnés)
+# ============================================
+terraform/
+analytics/
+email_sender/
+utils/
+
+# ============================================
+#  FICHIERS EXCLUS DU DÉPÔT APPLICATION
+# ============================================
+desktop.py
+
+# ============================================
+#  CONFIGURATION IDE / ÉDITEUR
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================
+#  BUILD / DISTRIBUTION
+# ============================================
+dist/
+build/
+*.egg-info/
+.eggs/
+
+
+# ============================================
+#  FICHIERS TEMPORAIRES DOCKER
+# ============================================
+# Ne pas ignorer .dockerignore ! Il est utile pour Docker build.

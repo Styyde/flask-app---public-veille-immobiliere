@@ -1,6 +1,21 @@
 # database/db_manager.py
+import os
 import sqlite3
+
+from sqlalchemy import delete, distinct, false, func, or_, select, union, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import selectinload
+
 from config import DB_PATH
+from database.expressions import clean_numeric_col, prix_m2_expr
+from database.models import (
+    AnnonceMubawab, AnnonceSarouty, Favori, ListingSnapshot, Lot, Produit,
+    Projet, ScrapeRun, Tache,
+)
+from database.session import session_scope
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -8,289 +23,84 @@ def get_connection():
     return conn
 
 def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    # ---- Tables Al Omrane ----
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS projets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url TEXT UNIQUE NOT NULL,
-            region TEXT,
-            type_bien TEXT,
-            titre TEXT,
-            localisation TEXT,
-            titre_foncier TEXT,
-            description TEXT,
-            date_extraction DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS lots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            projet_id INTEGER NOT NULL,
-            lot_titre TEXT,
-            nb_unites TEXT,
-            prix_min TEXT,
-            prix_max TEXT,
-            FOREIGN KEY (projet_id) REFERENCES projets (id) ON DELETE CASCADE
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS produits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            lot_id INTEGER NOT NULL,
-            no_produit TEXT,
-            surface TEXT,
-            prix TEXT,
-            FOREIGN KEY (lot_id) REFERENCES lots (id) ON DELETE CASCADE
-        )
-    """)
+    """Cree/met a jour le schema en appliquant les migrations Alembic
+    (voir alembic/versions/) jusqu'a la revision la plus recente."""
+    from alembic import command
+    from alembic.config import Config
 
-    # ---- Tables Sarouty ----
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS annonces_sarouty (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            property_id INTEGER UNIQUE NOT NULL,
-            url_annonce TEXT,
-            titre TEXT,
-            description TEXT,
-            prix INTEGER,
-            superficie INTEGER,
-            chambres INTEGER,
-            salles_de_bain INTEGER,
-            type_bien TEXT,
-            quartier TEXT,
-            ville TEXT,
-            date_extraction DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sarouty_ville ON annonces_sarouty (ville)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sarouty_type ON annonces_sarouty (type_bien)")
-
-    # ---- Tables Mubawab ----
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS annonces_mubawab (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url_annonce TEXT UNIQUE NOT NULL,
-            titre TEXT,
-            description TEXT,
-            prix INTEGER,
-            superficie INTEGER,
-            type_bien TEXT,
-            localisation TEXT,
-            ville TEXT,
-            region TEXT,
-            date_extraction DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mubawab_ville ON annonces_mubawab (ville)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mubawab_type ON annonces_mubawab (type_bien)")
-    
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_url ON projets (url)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_localisation ON projets (localisation)")
-
-    # ---- Table Favoris (avec migration) ----
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS favoris (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source TEXT NOT NULL,
-            annonce_id TEXT NOT NULL,
-            url TEXT,
-            titre TEXT,
-            localisation TEXT,
-            type_bien TEXT,
-            surface TEXT,
-            prix TEXT,
-            prix_m2 REAL,
-            date_ajout DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(source, annonce_id)
-        )
-    """)
-    
-    # Migration : ajouter les colonnes manquantes
-    cursor.execute("PRAGMA table_info(favoris)")
-    existing_columns = [col[1] for col in cursor.fetchall()]
-
-    # Migration legacy : ancienne colonne id_annonce → annonce_id
-    if 'id_annonce' in existing_columns:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS favoris_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL,
-                annonce_id TEXT NOT NULL,
-                url TEXT,
-                titre TEXT,
-                localisation TEXT,
-                type_bien TEXT,
-                surface TEXT,
-                prix TEXT,
-                prix_m2 REAL,
-                date_ajout DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(source, annonce_id)
-            )
-        """)
-        cursor.execute("""
-            INSERT INTO favoris_new
-                (source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2, date_ajout)
-            SELECT
-                source,
-                COALESCE(NULLIF(annonce_id, ''), id_annonce),
-                url, titre, localisation, type_bien, surface, prix, prix_m2, date_ajout
-            FROM favoris
-            WHERE COALESCE(NULLIF(annonce_id, ''), id_annonce) IS NOT NULL
-              AND COALESCE(NULLIF(annonce_id, ''), id_annonce) != ''
-        """)
-        cursor.execute("DROP TABLE favoris")
-        cursor.execute("ALTER TABLE favoris_new RENAME TO favoris")
-        existing_columns = [
-            col[1] for col in cursor.execute("PRAGMA table_info(favoris)").fetchall()
-        ]
-    
-    columns_to_add = {
-        'annonce_id': 'TEXT NOT NULL DEFAULT ""',
-        'url': 'TEXT',
-        'titre': 'TEXT',
-        'localisation': 'TEXT',
-        'type_bien': 'TEXT',
-        'surface': 'TEXT',
-        'prix': 'TEXT',
-        'prix_m2': 'REAL',
-        'date_ajout': 'DATETIME DEFAULT CURRENT_TIMESTAMP'
-    }
-    
-    for col, col_type in columns_to_add.items():
-        if col not in existing_columns:
-            try:
-                cursor.execute(f"ALTER TABLE favoris ADD COLUMN {col} {col_type}")
-                print(f"✅ Migration : colonne '{col}' ajoutée à la table favoris")
-            except sqlite3.OperationalError as e:
-                print(f"⚠️ Impossible d'ajouter la colonne {col} : {e}")
-    
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_favoris_source ON favoris (source)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_favoris_date ON favoris (date_ajout)")
-    
-    # ---- Table Taches (Background Tasks) ----
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS taches (
-            id TEXT PRIMARY KEY,
-            source TEXT NOT NULL,
-            status TEXT NOT NULL,
-            message TEXT,
-            result TEXT,
-            date_creation DATETIME DEFAULT CURRENT_TIMESTAMP,
-            date_fin DATETIME
-        )
-    """)
-
-    # ---- Suivi historique (évolution dans le temps) ----
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS scrape_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source TEXT NOT NULL,
-            started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            finished_at DATETIME,
-            statut TEXT DEFAULT 'en_cours',
-            nb_annonces INTEGER DEFAULT 0
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS listing_snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scrape_run_id INTEGER,
-            source TEXT NOT NULL,
-            listing_key TEXT NOT NULL,
-            type_bien TEXT,
-            ville TEXT,
-            quartier TEXT,
-            surface REAL,
-            prix REAL,
-            prix_m2 REAL,
-            scraped_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (scrape_run_id) REFERENCES scrape_runs (id)
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_date ON listing_snapshots (scraped_at)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_group ON listing_snapshots (type_bien, ville)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_key ON listing_snapshots (source, listing_key)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_run ON listing_snapshots (scrape_run_id)")
-
-    conn.commit()
-    conn.close()
+    cfg = Config(os.path.join(_REPO_ROOT, 'alembic.ini'))
+    cfg.set_main_option('script_location', os.path.join(_REPO_ROOT, 'alembic'))
+    command.upgrade(cfg, 'head')
     print("✅ Base de données initialisée avec succès.")
+
+
+def _model_to_dict(obj):
+    """Convertit une instance ORM en dict plat, meme forme que dict(sqlite3.Row)."""
+    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
 
 # ==================== AL OMRANE ====================
 def get_existing_urls():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT url FROM projets")
-    urls = {row[0] for row in cursor.fetchall()}
-    conn.close()
-    return urls
+    with session_scope() as session:
+        return {row[0] for row in session.execute(select(Projet.url))}
 
 # ==================== LISTES DYNAMIQUES ====================
 
 def get_types_by_source(source):
-    conn = get_connection()
-    cursor = conn.cursor()
-    if source == 'alomrane':
-        cursor.execute("SELECT DISTINCT type_bien FROM projets ORDER BY type_bien")
-    elif source == 'sarouty':
-        cursor.execute("SELECT DISTINCT type_bien FROM annonces_sarouty ORDER BY type_bien")
-    elif source == 'mubawab':
-        cursor.execute("SELECT DISTINCT type_bien FROM annonces_mubawab ORDER BY type_bien")
-    else:
-        cursor.execute("""
-            SELECT DISTINCT type_bien FROM (
-                SELECT type_bien FROM projets
-                UNION
-                SELECT type_bien FROM annonces_sarouty
-                UNION
-                SELECT type_bien FROM annonces_mubawab
-            ) ORDER BY type_bien
-        """)
-    types = [row[0] for row in cursor.fetchall() if row[0]]
-    conn.close()
-    return types
+    with session_scope() as session:
+        if source == 'alomrane':
+            stmt = select(distinct(Projet.type_bien)).order_by(Projet.type_bien)
+        elif source == 'sarouty':
+            stmt = select(distinct(AnnonceSarouty.type_bien)).order_by(AnnonceSarouty.type_bien)
+        elif source == 'mubawab':
+            stmt = select(distinct(AnnonceMubawab.type_bien)).order_by(AnnonceMubawab.type_bien)
+        else:
+            sub = union(
+                select(Projet.type_bien),
+                select(AnnonceSarouty.type_bien),
+                select(AnnonceMubawab.type_bien),
+            ).subquery()
+            stmt = select(sub.c.type_bien).order_by(sub.c.type_bien)
+        return [row[0] for row in session.execute(stmt) if row[0]]
 
 def get_villes_by_source(source):
-    conn = get_connection()
-    cursor = conn.cursor()
-    if source == 'alomrane':
-        cursor.execute("SELECT DISTINCT localisation FROM projets ORDER BY localisation")
-    elif source == 'sarouty':
-        cursor.execute("""
-            SELECT DISTINCT valeur FROM (
-                SELECT ville AS valeur FROM annonces_sarouty
-                UNION
-                SELECT quartier AS valeur FROM annonces_sarouty
-            ) WHERE valeur IS NOT NULL AND valeur != '' ORDER BY valeur
-        """)
-    elif source == 'mubawab':
-        cursor.execute("""
-            SELECT DISTINCT valeur FROM (
-                SELECT ville AS valeur FROM annonces_mubawab
-                UNION
-                SELECT localisation AS valeur FROM annonces_mubawab
-            ) WHERE valeur IS NOT NULL AND valeur != '' ORDER BY valeur
-        """)
-    else:
-        cursor.execute("""
-            SELECT DISTINCT ville FROM (
-                SELECT localisation AS ville FROM projets
-                UNION
-                SELECT ville FROM annonces_sarouty
-                UNION
-                SELECT quartier AS ville FROM annonces_sarouty
-                UNION
-                SELECT ville FROM annonces_mubawab
-                UNION
-                SELECT localisation AS ville FROM annonces_mubawab
-            ) WHERE ville IS NOT NULL AND ville != '' ORDER BY ville
-        """)
-    villes = [row[0] for row in cursor.fetchall() if row[0]]
-    conn.close()
-    return villes
+    with session_scope() as session:
+        if source == 'alomrane':
+            stmt = select(distinct(Projet.localisation)).order_by(Projet.localisation)
+        elif source == 'sarouty':
+            sub = union(
+                select(AnnonceSarouty.ville.label('valeur')),
+                select(AnnonceSarouty.quartier.label('valeur')),
+            ).subquery()
+            stmt = (
+                select(sub.c.valeur)
+                .where(sub.c.valeur.isnot(None), sub.c.valeur != '')
+                .order_by(sub.c.valeur)
+            )
+        elif source == 'mubawab':
+            sub = union(
+                select(AnnonceMubawab.ville.label('valeur')),
+                select(AnnonceMubawab.localisation.label('valeur')),
+            ).subquery()
+            stmt = (
+                select(sub.c.valeur)
+                .where(sub.c.valeur.isnot(None), sub.c.valeur != '')
+                .order_by(sub.c.valeur)
+            )
+        else:
+            sub = union(
+                select(Projet.localisation.label('ville')),
+                select(AnnonceSarouty.ville.label('ville')),
+                select(AnnonceSarouty.quartier.label('ville')),
+                select(AnnonceMubawab.ville.label('ville')),
+                select(AnnonceMubawab.localisation.label('ville')),
+            ).subquery()
+            stmt = (
+                select(sub.c.ville)
+                .where(sub.c.ville.isnot(None), sub.c.ville != '')
+                .order_by(sub.c.ville)
+            )
+        return [row[0] for row in session.execute(stmt) if row[0]]
 
 def save_projets(projets_list, scrape_run_id=None):
     if not projets_list:
@@ -298,103 +108,81 @@ def save_projets(projets_list, scrape_run_id=None):
     own_run = scrape_run_id is None
     if own_run:
         scrape_run_id = start_scrape_run('alomrane')
-    conn = get_connection()
-    cursor = conn.cursor()
     inserted = 0
     snapshot_rows = []
     try:
-        cursor.execute("BEGIN TRANSACTION")
-        for projet in projets_list:
-            url = projet.get('lien', '')
-            cursor.execute("SELECT id FROM projets WHERE url = ?", (url,))
-            existing = cursor.fetchone()
+        with session_scope() as session:
+            for projet in projets_list:
+                url = projet.get('lien', '')
+                existing = session.execute(
+                    select(Projet).where(Projet.url == url)
+                ).scalar_one_or_none()
 
-            if existing:
-                projet_id = existing[0]
-                cursor.execute("""
-                    UPDATE projets SET region = ?, type_bien = ?, titre = ?, localisation = ?,
-                        titre_foncier = ?, description = ?
-                    WHERE id = ?
-                """, (
-                    projet.get('region', ''),
-                    projet.get('type_bien', ''),
-                    projet.get('titre', ''),
-                    projet.get('localisation', ''),
-                    projet.get('titre_foncier', ''),
-                    projet.get('description', ''),
-                    projet_id
-                ))
-            else:
-                cursor.execute("""
-                    INSERT INTO projets
-                    (url, region, type_bien, titre, localisation, titre_foncier, description)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    url,
-                    projet.get('region', ''),
-                    projet.get('type_bien', ''),
-                    projet.get('titre', ''),
-                    projet.get('localisation', ''),
-                    projet.get('titre_foncier', ''),
-                    projet.get('description', '')
-                ))
-                inserted += 1
-                projet_id = cursor.lastrowid
-                for lot in projet.get('lots', []):
-                    cursor.execute("""
-                        INSERT INTO lots (projet_id, lot_titre, nb_unites, prix_min, prix_max)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        projet_id,
-                        lot.get('titre', ''),
-                        lot.get('nb_unites', ''),
-                        lot.get('prix_min', ''),
-                        lot.get('prix_max', '')
-                    ))
-                    lot_id = cursor.lastrowid
-                    for ligne in lot.get('lignes', []):
-                        cursor.execute("""
-                            INSERT INTO produits (lot_id, no_produit, surface, prix)
-                            VALUES (?, ?, ?, ?)
-                        """, (
-                            lot_id,
-                            ligne.get('no_produit', ''),
-                            ligne.get('surface', ''),
-                            ligne.get('prix', '')
-                        ))
+                if existing:
+                    existing.region = projet.get('region', '')
+                    existing.type_bien = projet.get('type_bien', '')
+                    existing.titre = projet.get('titre', '')
+                    existing.localisation = projet.get('localisation', '')
+                    existing.titre_foncier = projet.get('titre_foncier', '')
+                    existing.description = projet.get('description', '')
+                    projet_obj = existing
+                else:
+                    projet_obj = Projet(
+                        url=url,
+                        region=projet.get('region', ''),
+                        type_bien=projet.get('type_bien', ''),
+                        titre=projet.get('titre', ''),
+                        localisation=projet.get('localisation', ''),
+                        titre_foncier=projet.get('titre_foncier', ''),
+                        description=projet.get('description', ''),
+                    )
+                    session.add(projet_obj)
+                    inserted += 1
+                    for lot in projet.get('lots', []):
+                        lot_obj = Lot(
+                            lot_titre=lot.get('titre', ''),
+                            nb_unites=lot.get('nb_unites', ''),
+                            prix_min=lot.get('prix_min', ''),
+                            prix_max=lot.get('prix_max', ''),
+                        )
+                        projet_obj.lots.append(lot_obj)
+                        for ligne in lot.get('lignes', []):
+                            lot_obj.produits.append(Produit(
+                                no_produit=ligne.get('no_produit', ''),
+                                surface=ligne.get('surface', ''),
+                                prix=ligne.get('prix', ''),
+                            ))
 
-            # Snapshot : capture l'état courant des produits de ce projet pour cette campagne
-            cursor.execute("""
-                SELECT pr.no_produit, pr.surface, pr.prix
-                FROM produits pr JOIN lots l ON l.id = pr.lot_id
-                WHERE l.projet_id = ?
-            """, (projet_id,))
-            ville = projet.get('localisation', '')
-            type_bien = projet.get('type_bien', '')
-            for no_produit, surface, prix in cursor.fetchall():
-                snapshot_rows.append({
-                    'source': 'alomrane',
-                    'listing_key': f"{url}::{no_produit}",
-                    'type_bien': type_bien,
-                    'ville': ville,
-                    'quartier': None,
-                    'surface': _clean_numeric(surface, 'm²'),
-                    'prix': _clean_numeric(prix, 'DH'),
-                    'prix_m2': _parse_prix_m2(prix, surface),
-                })
+                session.flush()
 
-        _insert_snapshots(cursor, scrape_run_id, snapshot_rows)
-        conn.commit()
+                # Snapshot : capture l'état courant des produits de ce projet pour cette campagne
+                rows = session.execute(
+                    select(Produit.no_produit, Produit.surface, Produit.prix)
+                    .join(Lot, Lot.id == Produit.lot_id)
+                    .where(Lot.projet_id == projet_obj.id)
+                ).all()
+                ville = projet.get('localisation', '')
+                type_bien = projet.get('type_bien', '')
+                for no_produit, surface, prix in rows:
+                    snapshot_rows.append({
+                        'source': 'alomrane',
+                        'listing_key': f"{url}::{no_produit}",
+                        'type_bien': type_bien,
+                        'ville': ville,
+                        'quartier': None,
+                        'surface': _clean_numeric(surface, 'm²'),
+                        'prix': _clean_numeric(prix, 'DH'),
+                        'prix_m2': _parse_prix_m2(prix, surface),
+                    })
+
+            _insert_snapshots(session, scrape_run_id, snapshot_rows)
         print(f"💾 {inserted} projets Al Omrane insérés.")
         if own_run:
             finish_scrape_run(scrape_run_id, 'succes', inserted)
     except Exception as e:
-        conn.rollback()
         print(f"❌ Erreur insertion Al Omrane : {e}")
         if own_run:
             finish_scrape_run(scrape_run_id, 'erreur', inserted)
-    finally:
-        conn.close()
     return inserted
 
 def _parse_prix_m2(prix_str, surface_str):
@@ -424,193 +212,159 @@ def _clean_numeric(val, unit=None):
 
 def start_scrape_run(source):
     """Ouvre une nouvelle campagne de scraping et retourne son id."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO scrape_runs (source, statut) VALUES (?, 'en_cours')", (source,))
-    run_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return run_id
+    with session_scope() as session:
+        run = ScrapeRun(source=source, statut='en_cours')
+        session.add(run)
+        session.flush()
+        return run.id
 
 def finish_scrape_run(run_id, statut='succes', nb_annonces=0):
     """Clôture une campagne de scraping avec son statut final."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE scrape_runs SET statut = ?, nb_annonces = ?, finished_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-    """, (statut, nb_annonces, run_id))
-    conn.commit()
-    conn.close()
+    with session_scope() as session:
+        session.execute(
+            update(ScrapeRun)
+            .where(ScrapeRun.id == run_id)
+            .values(statut=statut, nb_annonces=nb_annonces, finished_at=func.now())
+        )
 
-def _insert_snapshots(cursor, scrape_run_id, rows):
-    """Insère un lot de lignes dans listing_snapshots (dans la transaction/cursor en cours)."""
+def _insert_snapshots(session, scrape_run_id, rows):
+    """Insère un lot de lignes dans listing_snapshots (dans la session/transaction en cours)."""
     if not rows:
         return
-    cursor.executemany("""
-        INSERT INTO listing_snapshots
-        (scrape_run_id, source, listing_key, type_bien, ville, quartier, surface, prix, prix_m2)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, [
-        (
-            scrape_run_id, r['source'], r['listing_key'], r.get('type_bien'),
-            r.get('ville'), r.get('quartier'), r.get('surface'), r.get('prix'), r.get('prix_m2'),
-        )
-        for r in rows
-    ])
+    session.execute(
+        ListingSnapshot.__table__.insert(),
+        [
+            {
+                'scrape_run_id': scrape_run_id,
+                'source': r['source'],
+                'listing_key': r['listing_key'],
+                'type_bien': r.get('type_bien'),
+                'ville': r.get('ville'),
+                'quartier': r.get('quartier'),
+                'surface': r.get('surface'),
+                'prix': r.get('prix'),
+                'prix_m2': r.get('prix_m2'),
+            }
+            for r in rows
+        ],
+    )
 
 def get_snapshots(date_from=None, date_to=None, villes=None):
     """Retourne les lignes de listing_snapshots, optionnellement filtrées par période/villes."""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    query = """
-        SELECT ls.scraped_at, ls.scrape_run_id, ls.source, ls.listing_key, ls.type_bien,
-               ls.ville, ls.quartier, ls.surface, ls.prix, ls.prix_m2, sr.started_at AS run_started_at
-        FROM listing_snapshots ls
-        LEFT JOIN scrape_runs sr ON sr.id = ls.scrape_run_id
-        WHERE 1=1
-    """
-    params = []
-    if villes:
-        placeholders = ','.join(['?'] * len(villes))
-        query += f" AND ls.ville IN ({placeholders})"
-        params.extend(villes)
-    if date_from:
-        query += " AND date(ls.scraped_at) >= date(?)"
-        params.append(date_from)
-    if date_to:
-        query += " AND date(ls.scraped_at) <= date(?)"
-        params.append(date_to)
-    cursor.execute(query, params)
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
-    return rows
+    with session_scope() as session:
+        stmt = (
+            select(
+                ListingSnapshot.scraped_at,
+                ListingSnapshot.scrape_run_id,
+                ListingSnapshot.source,
+                ListingSnapshot.listing_key,
+                ListingSnapshot.type_bien,
+                ListingSnapshot.ville,
+                ListingSnapshot.quartier,
+                ListingSnapshot.surface,
+                ListingSnapshot.prix,
+                ListingSnapshot.prix_m2,
+                ScrapeRun.started_at.label('run_started_at'),
+            )
+            .select_from(ListingSnapshot)
+            .outerjoin(ScrapeRun, ScrapeRun.id == ListingSnapshot.scrape_run_id)
+        )
+        if villes:
+            stmt = stmt.where(ListingSnapshot.ville.in_(villes))
+        if date_from:
+            stmt = stmt.where(func.date(ListingSnapshot.scraped_at) >= func.date(date_from))
+        if date_to:
+            stmt = stmt.where(func.date(ListingSnapshot.scraped_at) <= func.date(date_to))
+        return [dict(row._mapping) for row in session.execute(stmt)]
 
 def _enrich_produit(prod):
     row = dict(prod)
     row['prix_m2'] = _parse_prix_m2(row.get('prix'), row.get('surface'))
     return row
 
+def _projet_to_dict(projet_obj):
+    d = _model_to_dict(projet_obj)
+    d['lots'] = []
+    for lot in projet_obj.lots:
+        lot_dict = _model_to_dict(lot)
+        lot_dict['lignes'] = [_enrich_produit(_model_to_dict(p)) for p in lot.produits]
+        d['lots'].append(lot_dict)
+    return d
+
 def get_projet_detail(projet_id):
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM projets WHERE id = ?", (projet_id,))
-    p = cursor.fetchone()
-    if not p:
-        conn.close()
-        return None
-    projet = dict(p)
-    projet['lots'] = []
-    cursor.execute("SELECT * FROM lots WHERE projet_id = ?", (projet_id,))
-    for lot in cursor.fetchall():
-        lot_dict = dict(lot)
-        cursor.execute("SELECT * FROM produits WHERE lot_id = ?", (lot['id'],))
-        lot_dict['lignes'] = [_enrich_produit(prod) for prod in cursor.fetchall()]
-        projet['lots'].append(lot_dict)
-    conn.close()
-    return projet
+    with session_scope() as session:
+        projet_obj = session.execute(
+            select(Projet)
+            .options(selectinload(Projet.lots).selectinload(Lot.produits))
+            .where(Projet.id == projet_id)
+        ).unique().scalar_one_or_none()
+        if not projet_obj:
+            return None
+        return _projet_to_dict(projet_obj)
 
 def get_projets_resume(**filters):
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    with session_scope() as session:
+        pm2 = prix_m2_expr(Produit.prix, Produit.surface)
+        prix_clean = clean_numeric_col(Produit.prix, 'DH')
+        surface_clean = clean_numeric_col(Produit.surface, 'm²')
+        prix_m2_min_col = func.min(pm2).label('prix_m2_min')
+        prix_m2_max_col = func.max(pm2).label('prix_m2_max')
 
-    prix_m2_expr = """
-        ROUND(
-            CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) /
-            NULLIF(CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL), 0),
-            2
+        stmt = (
+            select(
+                Projet.id,
+                Projet.titre,
+                Projet.localisation,
+                Projet.type_bien,
+                Projet.url,
+                Projet.region,
+                func.count(distinct(Lot.id)).label('nb_lots'),
+                func.count(Produit.id).label('nb_produits'),
+                prix_m2_min_col,
+                prix_m2_max_col,
+            )
+            .select_from(Projet)
+            .join(Lot, Lot.projet_id == Projet.id)
+            .join(Produit, Produit.lot_id == Lot.id)
+            .where(prix_clean > 0)
         )
-    """
 
-    query = f"""
-        SELECT
-            p.id,
-            p.titre,
-            p.localisation,
-            p.type_bien,
-            p.url,
-            p.region,
-            COUNT(DISTINCT l.id) AS nb_lots,
-            COUNT(pr.id) AS nb_produits,
-            MIN({prix_m2_expr}) AS prix_m2_min,
-            MAX({prix_m2_expr}) AS prix_m2_max
-        FROM projets p
-        JOIN lots l ON l.projet_id = p.id
-        JOIN produits pr ON pr.lot_id = l.id
-        WHERE CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) > 0
-    """
-    params = []
+        if filters.get('ville'):
+            stmt = stmt.where(Projet.localisation == filters['ville'])
+        if filters.get('type_brut_list'):
+            stmt = stmt.where(Projet.type_bien.in_(filters['type_brut_list']))
+        elif filters.get('type_bien'):
+            from services.type_mapping import get_brut_types_for_normalized
+            brut_list = get_brut_types_for_normalized(filters['type_bien'])
+            stmt = stmt.where(Projet.type_bien.in_(brut_list)) if brut_list else stmt.where(false())
+        if filters.get('budget_min') is not None:
+            stmt = stmt.where(prix_clean >= filters['budget_min'])
+        if filters.get('budget_max') is not None:
+            stmt = stmt.where(prix_clean <= filters['budget_max'])
+        if filters.get('surface_min') is not None:
+            stmt = stmt.where(surface_clean >= filters['surface_min'])
+        if filters.get('surface_max') is not None:
+            stmt = stmt.where(surface_clean <= filters['surface_max'])
+        if filters.get('prix_m2_min') is not None:
+            stmt = stmt.where(pm2 >= filters['prix_m2_min'])
+        if filters.get('prix_m2_max') is not None:
+            stmt = stmt.where(pm2 <= filters['prix_m2_max'])
 
-    if filters.get('ville'):
-        query += " AND p.localisation = ?"
-        params.append(filters['ville'])
-    if filters.get('type_brut_list'):
-        brut_list = filters['type_brut_list']
-        if brut_list:
-            placeholders = ','.join(['?'] * len(brut_list))
-            query += f" AND p.type_bien IN ({placeholders})"
-            params.extend(brut_list)
-        else:
-            query += " AND 1=0"
-    elif filters.get('type_bien'):
-        from services.type_mapping import get_brut_types_for_normalized
-        brut_list = get_brut_types_for_normalized(filters['type_bien'])
-        if brut_list:
-            placeholders = ','.join(['?'] * len(brut_list))
-            query += f" AND p.type_bien IN ({placeholders})"
-            params.extend(brut_list)
-        else:
-            query += " AND 1=0"
-    if filters.get('budget_min') is not None:
-        query += " AND CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) >= ?"
-        params.append(filters['budget_min'])
-    if filters.get('budget_max') is not None:
-        query += " AND CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) <= ?"
-        params.append(filters['budget_max'])
-    if filters.get('surface_min') is not None:
-        query += " AND CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL) >= ?"
-        params.append(filters['surface_min'])
-    if filters.get('surface_max') is not None:
-        query += " AND CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL) <= ?"
-        params.append(filters['surface_max'])
-    if filters.get('prix_m2_min') is not None:
-        query += f" AND {prix_m2_expr} >= ?"
-        params.append(filters['prix_m2_min'])
-    if filters.get('prix_m2_max') is not None:
-        query += f" AND {prix_m2_expr} <= ?"
-        params.append(filters['prix_m2_max'])
+        stmt = stmt.group_by(Projet.id).order_by(prix_m2_min_col.asc())
+        if filters.get('limit'):
+            stmt = stmt.limit(filters['limit'])
 
-    query += " GROUP BY p.id ORDER BY prix_m2_min ASC"
-    if filters.get('limit'):
-        query += " LIMIT ?"
-        params.append(filters['limit'])
-
-    cursor.execute(query, params)
-    result = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return result
+        return [dict(row._mapping) for row in session.execute(stmt)]
 
 def get_all_projets(limit=100):
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    projets = []
-    cursor.execute("SELECT * FROM projets ORDER BY date_extraction DESC LIMIT ?", (limit,))
-    for p in cursor.fetchall():
-        projet = dict(p)
-        projet['lots'] = []
-        cursor.execute("SELECT * FROM lots WHERE projet_id = ?", (p['id'],))
-        for lot in cursor.fetchall():
-            lot_dict = dict(lot)
-            cursor.execute("SELECT * FROM produits WHERE lot_id = ?", (lot['id'],))
-            lot_dict['lignes'] = [_enrich_produit(prod) for prod in cursor.fetchall()]
-            projet['lots'].append(lot_dict)
-        projets.append(projet)
-    conn.close()
-    return projets
+    with session_scope() as session:
+        projets_obj = session.execute(
+            select(Projet)
+            .options(selectinload(Projet.lots).selectinload(Lot.produits))
+            .order_by(Projet.date_extraction.desc())
+            .limit(limit)
+        ).unique().scalars().all()
+        return [_projet_to_dict(p) for p in projets_obj]
 
 # ==================== SAROUTY ====================
 def save_annonces_sarouty(annonces_list, scrape_run_id=None):
@@ -619,135 +373,101 @@ def save_annonces_sarouty(annonces_list, scrape_run_id=None):
     own_run = scrape_run_id is None
     if own_run:
         scrape_run_id = start_scrape_run('sarouty')
-    conn = get_connection()
-    cursor = conn.cursor()
     inserted = 0
     snapshot_rows = []
     try:
-        cursor.execute("BEGIN TRANSACTION")
-        for a in annonces_list:
-            property_id = a.get('property_id')
-            if property_id is None:
-                continue
+        with session_scope() as session:
+            for a in annonces_list:
+                property_id = a.get('property_id')
+                if property_id is None:
+                    continue
 
-            cursor.execute("SELECT 1 FROM annonces_sarouty WHERE property_id = ?", (property_id,))
-            is_new = cursor.fetchone() is None
+                is_new = session.execute(
+                    select(AnnonceSarouty.id).where(AnnonceSarouty.property_id == property_id)
+                ).first() is None
 
-            cursor.execute("""
-                INSERT INTO annonces_sarouty
-                (property_id, url_annonce, titre, description, prix, superficie, chambres, salles_de_bain, type_bien, quartier, ville)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(property_id) DO UPDATE SET
-                    url_annonce = excluded.url_annonce,
-                    titre = excluded.titre,
-                    description = excluded.description,
-                    prix = excluded.prix,
-                    superficie = excluded.superficie,
-                    chambres = excluded.chambres,
-                    salles_de_bain = excluded.salles_de_bain,
-                    type_bien = excluded.type_bien,
-                    quartier = excluded.quartier,
-                    ville = excluded.ville
-            """, (
-                property_id,
-                a.get('url_annonce'),
-                a.get('titre'),
-                a.get('description'),
-                a.get('prix', 0),
-                a.get('superficie', 0),
-                a.get('chambres'),
-                a.get('salles_de_bain'),
-                a.get('type_bien'),
-                a.get('quartier'),
-                a.get('ville')
-            ))
-            if is_new:
-                inserted += 1
+                values = dict(
+                    property_id=property_id,
+                    url_annonce=a.get('url_annonce'),
+                    titre=a.get('titre'),
+                    description=a.get('description'),
+                    prix=a.get('prix', 0),
+                    superficie=a.get('superficie', 0),
+                    chambres=a.get('chambres'),
+                    salles_de_bain=a.get('salles_de_bain'),
+                    type_bien=a.get('type_bien'),
+                    quartier=a.get('quartier'),
+                    ville=a.get('ville'),
+                )
+                stmt = sqlite_insert(AnnonceSarouty).values(**values).on_conflict_do_update(
+                    index_elements=['property_id'],
+                    set_={k: v for k, v in values.items() if k != 'property_id'},
+                )
+                session.execute(stmt)
+                if is_new:
+                    inserted += 1
 
-            prix = a.get('prix') or 0
-            superficie = a.get('superficie') or 0
-            snapshot_rows.append({
-                'source': 'sarouty',
-                'listing_key': str(property_id),
-                'type_bien': a.get('type_bien'),
-                'ville': a.get('ville'),
-                'quartier': a.get('quartier'),
-                'surface': superficie or None,
-                'prix': prix or None,
-                'prix_m2': round(prix / superficie, 2) if superficie else None,
-            })
+                prix = a.get('prix') or 0
+                superficie = a.get('superficie') or 0
+                snapshot_rows.append({
+                    'source': 'sarouty',
+                    'listing_key': str(property_id),
+                    'type_bien': a.get('type_bien'),
+                    'ville': a.get('ville'),
+                    'quartier': a.get('quartier'),
+                    'surface': superficie or None,
+                    'prix': prix or None,
+                    'prix_m2': round(prix / superficie, 2) if superficie else None,
+                })
 
-        _insert_snapshots(cursor, scrape_run_id, snapshot_rows)
-        conn.commit()
+            _insert_snapshots(session, scrape_run_id, snapshot_rows)
         print(f"💾 {inserted} annonces Sarouty insérées.")
         if own_run:
             finish_scrape_run(scrape_run_id, 'succes', inserted)
     except Exception as e:
-        conn.rollback()
         print(f"❌ Erreur insertion Sarouty : {e}")
         if own_run:
             finish_scrape_run(scrape_run_id, 'erreur', inserted)
-    finally:
-        conn.close()
     return inserted
 
 def get_annonces_sarouty_filtered(**filters):
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    query = """
-        SELECT *, 
-               ROUND(prix / NULLIF(superficie, 0), 2) AS prix_m2 
-        FROM annonces_sarouty 
-        WHERE 1=1
-    """
-    params = []
-    if 'ville' in filters and filters['ville']:
-        query += " AND (ville = ? OR quartier = ?)"
-        params.append(filters['ville'])
-        params.append(filters['ville'])
-    
-    if 'type_bien' in filters and filters['type_bien']:
-        from services.type_mapping import get_brut_types_for_normalized
-        brut_list = get_brut_types_for_normalized(filters['type_bien'])
-        if brut_list:
-            placeholders = ','.join(['?'] * len(brut_list))
-            query += f" AND type_bien IN ({placeholders})"
-            params.extend(brut_list)
-        else:
-            query += " AND 1=0"
-    elif 'type_brut_list' in filters and filters['type_brut_list']:
-        brut_list = filters['type_brut_list']
-        if brut_list:
-            placeholders = ','.join(['?'] * len(brut_list))
-            query += f" AND type_bien IN ({placeholders})"
-            params.extend(brut_list)
-        else:
-            query += " AND 1=0"
+    with session_scope() as session:
+        pm2 = func.round(AnnonceSarouty.prix / func.nullif(AnnonceSarouty.superficie, 0), 2).label('prix_m2')
+        stmt = select(AnnonceSarouty, pm2)
 
-    if 'budget_min' in filters and filters['budget_min']:
-        query += " AND prix >= ?"
-        params.append(filters['budget_min'])
-    if 'budget_max' in filters and filters['budget_max']:
-        query += " AND prix <= ?"
-        params.append(filters['budget_max'])
-    if 'superficie_min' in filters and filters['superficie_min']:
-        query += " AND superficie >= ?"
-        params.append(filters['superficie_min'])
-    if 'superficie_max' in filters and filters['superficie_max']:
-        query += " AND superficie <= ?"
-        params.append(filters['superficie_max'])
-    if 'prix_m2_min' in filters and filters['prix_m2_min']:
-        query += " AND ROUND(prix / NULLIF(superficie, 0), 2) >= ?"
-        params.append(filters['prix_m2_min'])
-    if 'prix_m2_max' in filters and filters['prix_m2_max']:
-        query += " AND ROUND(prix / NULLIF(superficie, 0), 2) <= ?"
-        params.append(filters['prix_m2_max'])
-    query += " ORDER BY prix_m2 ASC"
-    cursor.execute(query, params)
-    result = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return result
+        if filters.get('ville'):
+            stmt = stmt.where(or_(
+                AnnonceSarouty.ville == filters['ville'],
+                AnnonceSarouty.quartier == filters['ville'],
+            ))
+
+        if filters.get('type_bien'):
+            from services.type_mapping import get_brut_types_for_normalized
+            brut_list = get_brut_types_for_normalized(filters['type_bien'])
+            stmt = stmt.where(AnnonceSarouty.type_bien.in_(brut_list)) if brut_list else stmt.where(false())
+        elif filters.get('type_brut_list'):
+            stmt = stmt.where(AnnonceSarouty.type_bien.in_(filters['type_brut_list']))
+
+        if filters.get('budget_min'):
+            stmt = stmt.where(AnnonceSarouty.prix >= filters['budget_min'])
+        if filters.get('budget_max'):
+            stmt = stmt.where(AnnonceSarouty.prix <= filters['budget_max'])
+        if filters.get('superficie_min'):
+            stmt = stmt.where(AnnonceSarouty.superficie >= filters['superficie_min'])
+        if filters.get('superficie_max'):
+            stmt = stmt.where(AnnonceSarouty.superficie <= filters['superficie_max'])
+        if filters.get('prix_m2_min'):
+            stmt = stmt.where(pm2 >= filters['prix_m2_min'])
+        if filters.get('prix_m2_max'):
+            stmt = stmt.where(pm2 <= filters['prix_m2_max'])
+
+        stmt = stmt.order_by(pm2.asc())
+        result = []
+        for row in session.execute(stmt):
+            d = _model_to_dict(row[0])
+            d['prix_m2'] = row[1]
+            result.append(d)
+        return result
 
 # ==================== MUBAWAB ====================
 def save_annonces_mubawab(annonces_list, scrape_run_id=None):
@@ -756,230 +476,159 @@ def save_annonces_mubawab(annonces_list, scrape_run_id=None):
     own_run = scrape_run_id is None
     if own_run:
         scrape_run_id = start_scrape_run('mubawab')
-    conn = get_connection()
-    cursor = conn.cursor()
     inserted = 0
     snapshot_rows = []
     try:
-        cursor.execute("BEGIN TRANSACTION")
-        for a in annonces_list:
-            url_annonce = a.get('url_annonce') or a.get('url')
-            if not url_annonce:
-                continue
+        with session_scope() as session:
+            for a in annonces_list:
+                url_annonce = a.get('url_annonce') or a.get('url')
+                if not url_annonce:
+                    continue
 
-            cursor.execute("SELECT 1 FROM annonces_mubawab WHERE url_annonce = ?", (url_annonce,))
-            is_new = cursor.fetchone() is None
+                is_new = session.execute(
+                    select(AnnonceMubawab.id).where(AnnonceMubawab.url_annonce == url_annonce)
+                ).first() is None
 
-            prix = a.get('prix', 0)
-            superficie = a.get('superficie') if a.get('superficie') is not None else a.get('surface', 0)
-            type_bien = a.get('type_bien')
-            localisation = a.get('localisation') or a.get('location')
-            ville = a.get('ville')
+                prix = a.get('prix', 0)
+                superficie = a.get('superficie') if a.get('superficie') is not None else a.get('surface', 0)
+                type_bien = a.get('type_bien')
+                localisation = a.get('localisation') or a.get('location')
+                ville = a.get('ville')
 
-            cursor.execute("""
-                INSERT INTO annonces_mubawab
-                (url_annonce, titre, description, prix, superficie, type_bien, localisation, ville, region)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(url_annonce) DO UPDATE SET
-                    titre = excluded.titre,
-                    description = excluded.description,
-                    prix = excluded.prix,
-                    superficie = excluded.superficie,
-                    type_bien = excluded.type_bien,
-                    localisation = excluded.localisation,
-                    ville = excluded.ville,
-                    region = excluded.region
-            """, (
-                url_annonce,
-                a.get('titre') or a.get('title'),
-                a.get('description'),
-                prix,
-                superficie,
-                type_bien,
-                localisation,
-                ville,
-                a.get('region'),
-            ))
-            if is_new:
-                inserted += 1
+                values = dict(
+                    url_annonce=url_annonce,
+                    titre=a.get('titre') or a.get('title'),
+                    description=a.get('description'),
+                    prix=prix,
+                    superficie=superficie,
+                    type_bien=type_bien,
+                    localisation=localisation,
+                    ville=ville,
+                    region=a.get('region'),
+                )
+                stmt = sqlite_insert(AnnonceMubawab).values(**values).on_conflict_do_update(
+                    index_elements=['url_annonce'],
+                    set_={k: v for k, v in values.items() if k != 'url_annonce'},
+                )
+                session.execute(stmt)
+                if is_new:
+                    inserted += 1
 
-            prix = prix or 0
-            superficie = superficie or 0
-            snapshot_rows.append({
-                'source': 'mubawab',
-                'listing_key': url_annonce,
-                'type_bien': type_bien,
-                'ville': ville,
-                'quartier': localisation,
-                'surface': superficie or None,
-                'prix': prix or None,
-                'prix_m2': round(prix / superficie, 2) if superficie else None,
-            })
+                prix = prix or 0
+                superficie = superficie or 0
+                snapshot_rows.append({
+                    'source': 'mubawab',
+                    'listing_key': url_annonce,
+                    'type_bien': type_bien,
+                    'ville': ville,
+                    'quartier': localisation,
+                    'surface': superficie or None,
+                    'prix': prix or None,
+                    'prix_m2': round(prix / superficie, 2) if superficie else None,
+                })
 
-        _insert_snapshots(cursor, scrape_run_id, snapshot_rows)
-        conn.commit()
+            _insert_snapshots(session, scrape_run_id, snapshot_rows)
         print(f"💾 {inserted} annonces Mubawab insérées.")
         if own_run:
             finish_scrape_run(scrape_run_id, 'succes', inserted)
     except Exception as e:
-        conn.rollback()
         print(f"❌ Erreur insertion Mubawab : {e}")
         if own_run:
             finish_scrape_run(scrape_run_id, 'erreur', inserted)
-    finally:
-        conn.close()
     return inserted
 
 def get_annonces_mubawab_filtered(**filters):
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    query = """
-        SELECT *,
-               ROUND(prix / NULLIF(superficie, 0), 2) AS prix_m2
-        FROM annonces_mubawab
-        WHERE 1=1
-    """
-    params = []
+    with session_scope() as session:
+        pm2 = func.round(AnnonceMubawab.prix / func.nullif(AnnonceMubawab.superficie, 0), 2).label('prix_m2')
+        stmt = select(AnnonceMubawab, pm2)
 
-    if 'ville' in filters and filters['ville']:
-        query += " AND (ville = ? OR localisation = ?)"
-        params.append(filters['ville'])
-        params.append(filters['ville'])
+        if filters.get('ville'):
+            stmt = stmt.where(or_(
+                AnnonceMubawab.ville == filters['ville'],
+                AnnonceMubawab.localisation == filters['ville'],
+            ))
 
-    if 'type_bien' in filters and filters['type_bien']:
-        from services.type_mapping import get_brut_types_for_normalized
-        brut_list = get_brut_types_for_normalized(filters['type_bien'])
-        if brut_list:
-            placeholders = ','.join(['?'] * len(brut_list))
-            query += f" AND type_bien IN ({placeholders})"
-            params.extend(brut_list)
-        else:
-            query += " AND 1=0"
-    elif 'type_brut_list' in filters and filters['type_brut_list']:
-        brut_list = filters['type_brut_list']
-        if brut_list:
-            placeholders = ','.join(['?'] * len(brut_list))
-            query += f" AND type_bien IN ({placeholders})"
-            params.extend(brut_list)
-        else:
-            query += " AND 1=0"
+        if filters.get('type_bien'):
+            from services.type_mapping import get_brut_types_for_normalized
+            brut_list = get_brut_types_for_normalized(filters['type_bien'])
+            stmt = stmt.where(AnnonceMubawab.type_bien.in_(brut_list)) if brut_list else stmt.where(false())
+        elif filters.get('type_brut_list'):
+            stmt = stmt.where(AnnonceMubawab.type_bien.in_(filters['type_brut_list']))
 
-    # --- FILTRE REGION ---
-    if 'region' in filters and filters['region']:
-        query += " AND region = ?"
-        params.append(filters['region'])
-    # --------------------
+        # --- FILTRE REGION ---
+        if filters.get('region'):
+            stmt = stmt.where(AnnonceMubawab.region == filters['region'])
+        # --------------------
 
-    if 'budget_min' in filters and filters['budget_min'] is not None:
-        query += " AND prix >= ?"
-        params.append(filters['budget_min'])
-    if 'budget_max' in filters and filters['budget_max'] is not None:
-        query += " AND prix <= ?"
-        params.append(filters['budget_max'])
-    if 'superficie_min' in filters and filters['superficie_min'] is not None:
-        query += " AND superficie >= ?"
-        params.append(filters['superficie_min'])
-    if 'superficie_max' in filters and filters['superficie_max'] is not None:
-        query += " AND superficie <= ?"
-        params.append(filters['superficie_max'])
-    if 'prix_m2_min' in filters and filters['prix_m2_min'] is not None:
-        query += " AND ROUND(prix / NULLIF(superficie, 0), 2) >= ?"
-        params.append(filters['prix_m2_min'])
-    if 'prix_m2_max' in filters and filters['prix_m2_max'] is not None:
-        query += " AND ROUND(prix / NULLIF(superficie, 0), 2) <= ?"
-        params.append(filters['prix_m2_max'])
+        if filters.get('budget_min') is not None:
+            stmt = stmt.where(AnnonceMubawab.prix >= filters['budget_min'])
+        if filters.get('budget_max') is not None:
+            stmt = stmt.where(AnnonceMubawab.prix <= filters['budget_max'])
+        if filters.get('superficie_min') is not None:
+            stmt = stmt.where(AnnonceMubawab.superficie >= filters['superficie_min'])
+        if filters.get('superficie_max') is not None:
+            stmt = stmt.where(AnnonceMubawab.superficie <= filters['superficie_max'])
+        if filters.get('prix_m2_min') is not None:
+            stmt = stmt.where(pm2 >= filters['prix_m2_min'])
+        if filters.get('prix_m2_max') is not None:
+            stmt = stmt.where(pm2 <= filters['prix_m2_max'])
 
-    query += " ORDER BY prix_m2 ASC"
-    cursor.execute(query, params)
-    result = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return result
+        stmt = stmt.order_by(pm2.asc())
+        result = []
+        for row in session.execute(stmt):
+            d = _model_to_dict(row[0])
+            d['prix_m2'] = row[1]
+            result.append(d)
+        return result
+
 # ==================== STATISTIQUES GLOBALES ====================
 def get_statistiques_globales():
-    conn = get_connection()
-    cursor = conn.cursor()
-    stats = {}
-    cursor.execute("SELECT COUNT(*) FROM projets")
-    stats['nb_projets'] = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM lots")
-    stats['nb_lots'] = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM produits")
-    stats['nb_produits'] = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM annonces_sarouty")
-    stats['nb_sarouty'] = cursor.fetchone()[0]
-    try:
-        cursor.execute("SELECT COUNT(*) FROM annonces_mubawab")
-        stats['nb_mubawab'] = cursor.fetchone()[0]
-    except sqlite3.OperationalError:
-        stats['nb_mubawab'] = 0
+    with session_scope() as session:
+        stats = {}
+        stats['nb_projets'] = session.execute(select(func.count()).select_from(Projet)).scalar()
+        stats['nb_lots'] = session.execute(select(func.count()).select_from(Lot)).scalar()
+        stats['nb_produits'] = session.execute(select(func.count()).select_from(Produit)).scalar()
+        stats['nb_sarouty'] = session.execute(select(func.count()).select_from(AnnonceSarouty)).scalar()
+        stats['nb_mubawab'] = session.execute(select(func.count()).select_from(AnnonceMubawab)).scalar()
 
-    cursor.execute("SELECT DISTINCT localisation FROM projets")
-    stats['villes'] = [row[0] for row in cursor.fetchall()]
-    cursor.execute("SELECT DISTINCT type_bien FROM projets")
-    stats['types_biens'] = [row[0] for row in cursor.fetchall()]
+        stats['villes'] = [row[0] for row in session.execute(select(distinct(Projet.localisation)))]
+        stats['types_biens'] = [row[0] for row in session.execute(select(distinct(Projet.type_bien)))]
 
-    cursor.execute("SELECT DISTINCT ville FROM annonces_sarouty")
-    stats['villes_sarouty'] = [row[0] for row in cursor.fetchall()]
-    cursor.execute("SELECT DISTINCT type_bien FROM annonces_sarouty")
-    stats['types_sarouty'] = [row[0] for row in cursor.fetchall()]
-    try:
-        cursor.execute("SELECT DISTINCT ville FROM annonces_mubawab")
-        stats['villes_mubawab'] = [row[0] for row in cursor.fetchall()]
-        cursor.execute("SELECT DISTINCT type_bien FROM annonces_mubawab")
-        stats['types_mubawab'] = [row[0] for row in cursor.fetchall()]
-    except sqlite3.OperationalError:
-        stats['villes_mubawab'] = []
-        stats['types_mubawab'] = []
-    
-    # Favoris
-    cursor.execute("SELECT COUNT(*) FROM favoris")
-    stats['nb_favoris'] = cursor.fetchone()[0]
-    
-    conn.close()
-    return stats
+        stats['villes_sarouty'] = [row[0] for row in session.execute(select(distinct(AnnonceSarouty.ville)))]
+        stats['types_sarouty'] = [row[0] for row in session.execute(select(distinct(AnnonceSarouty.type_bien)))]
+
+        stats['villes_mubawab'] = [row[0] for row in session.execute(select(distinct(AnnonceMubawab.ville)))]
+        stats['types_mubawab'] = [row[0] for row in session.execute(select(distinct(AnnonceMubawab.type_bien)))]
+
+        # Favoris
+        stats['nb_favoris'] = session.execute(select(func.count()).select_from(Favori)).scalar()
+
+        return stats
 
 def get_prix_m2_stats(ville=None, type_bien=None):
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = """
-        SELECT 
-            p.localisation,
-            p.type_bien,
-            pr.surface,
-            pr.prix,
-            CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL) as surface_m2,
-            CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) as prix_brut
-        FROM produits pr
-        JOIN lots l ON l.id = pr.lot_id
-        JOIN projets p ON p.id = l.projet_id
-        WHERE CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) > 0
-    """
-    params = []
-    if ville:
-        query += " AND p.localisation = ?"
-        params.append(ville)
-    if type_bien:
-        from services.type_mapping import get_brut_types_for_normalized
-        brut_list = get_brut_types_for_normalized(type_bien)
-        if brut_list:
-            placeholders = ','.join(['?'] * len(brut_list))
-            query += f" AND p.type_bien IN ({placeholders})"
-            params.extend(brut_list)
-        else:
-            query += " AND 1=0"
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-    prix_m2_list = []
-    for row in rows:
-        try:
-            surface = float(row[4])
-            prix = float(row[5])
-            if surface > 0 and prix > 0:
-                prix_m2_list.append(prix / surface)
-        except:
-            pass
+    with session_scope() as session:
+        surface_m2 = clean_numeric_col(Produit.surface, 'm²').label('surface_m2')
+        prix_brut = clean_numeric_col(Produit.prix, 'DH').label('prix_brut')
+        stmt = (
+            select(surface_m2, prix_brut)
+            .select_from(Produit)
+            .join(Lot, Lot.id == Produit.lot_id)
+            .join(Projet, Projet.id == Lot.projet_id)
+            .where(clean_numeric_col(Produit.prix, 'DH') > 0)
+        )
+        if ville:
+            stmt = stmt.where(Projet.localisation == ville)
+        if type_bien:
+            from services.type_mapping import get_brut_types_for_normalized
+            brut_list = get_brut_types_for_normalized(type_bien)
+            stmt = stmt.where(Projet.type_bien.in_(brut_list)) if brut_list else stmt.where(false())
+        rows = session.execute(stmt).all()
+
+    prix_m2_list = [
+        prix / surface
+        for surface, prix in rows
+        if surface and prix and surface > 0 and prix > 0
+    ]
     if not prix_m2_list:
         return {"moyenne": 0, "ecart_type": 0, "nombre": 0}
     import statistics
@@ -993,124 +642,77 @@ def get_prix_m2_stats(ville=None, type_bien=None):
 
 def ajouter_favori(source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2):
     """Ajoute une annonce aux favoris."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            INSERT OR IGNORE INTO favoris 
-            (source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2))
-        conn.commit()
-        inserted = cursor.rowcount > 0
-        conn.close()
-        return inserted
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        raise e
+    with session_scope() as session:
+        stmt = sqlite_insert(Favori).values(
+            source=source, annonce_id=annonce_id, url=url, titre=titre,
+            localisation=localisation, type_bien=type_bien, surface=surface,
+            prix=prix, prix_m2=prix_m2,
+        ).on_conflict_do_nothing(index_elements=['source', 'annonce_id'])
+        result = session.execute(stmt)
+        return result.rowcount > 0
 
 def supprimer_favori(source, annonce_id):
     """Supprime une annonce des favoris."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("DELETE FROM favoris WHERE source = ? AND annonce_id = ?", (source, annonce_id))
-        conn.commit()
-        deleted = cursor.rowcount > 0
-        conn.close()
-        return deleted
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        raise e
+    with session_scope() as session:
+        result = session.execute(
+            delete(Favori).where(Favori.source == source, Favori.annonce_id == annonce_id)
+        )
+        return result.rowcount > 0
 
 def get_favoris():
     """Retourne la liste de tous les favoris, triés par date d'ajout décroissante."""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM favoris ORDER BY date_ajout DESC")
-    rows = cursor.fetchall()
-    result = [dict(row) for row in rows]
-    conn.close()
-    return result
+    with session_scope() as session:
+        rows = session.execute(select(Favori).order_by(Favori.date_ajout.desc())).scalars().all()
+        return [_model_to_dict(row) for row in rows]
 
 
 def get_favoris_set():
     """Retourne un dict {source: [annonce_id, ...]} pour le frontend."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT source, annonce_id FROM favoris")
-    result = {}
-    for source, annonce_id in cursor.fetchall():
-        key = str(source)
-        if key not in result:
-            result[key] = []
-        result[key].append(str(annonce_id))
-    conn.close()
-    return result
+    with session_scope() as session:
+        result = {}
+        for source, annonce_id in session.execute(select(Favori.source, Favori.annonce_id)):
+            key = str(source)
+            result.setdefault(key, []).append(str(annonce_id))
+        return result
 
 def est_favori(source, annonce_id):
     """Vérifie si une annonce est déjà dans les favoris."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM favoris WHERE source = ? AND annonce_id = ?", (source, annonce_id))
-    exists = cursor.fetchone() is not None
-    conn.close()
-    return exists
+    with session_scope() as session:
+        return session.execute(
+            select(Favori.id).where(Favori.source == source, Favori.annonce_id == annonce_id)
+        ).first() is not None
 
 # ==================== GESTION DES TACHES ====================
 
 def create_task(task_id, source, initial_message="En attente..."):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO taches (id, source, status, message) 
-        VALUES (?, ?, 'en_cours', ?)
-    """, (task_id, source, initial_message))
-    conn.commit()
-    conn.close()
+    with session_scope() as session:
+        session.add(Tache(id=task_id, source=source, status='en_cours', message=initial_message))
 
 def update_task_status(task_id, status, message=None, result=None):
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    updates = ["status = ?"]
-    params = [status]
-    
-    if message is not None:
-        updates.append("message = ?")
-        params.append(message)
-    if result is not None:
-        import json
-        updates.append("result = ?")
-        params.append(json.dumps(result))
-        
-    if status in ['termine', 'erreur']:
-        updates.append("date_fin = CURRENT_TIMESTAMP")
-        
-    query = f"UPDATE taches SET {', '.join(updates)} WHERE id = ?"
-    params.append(task_id)
-    
-    cursor.execute(query, params)
-    conn.commit()
-    conn.close()
+    with session_scope() as session:
+        tache = session.get(Tache, task_id)
+        if not tache:
+            return
+
+        tache.status = status
+        if message is not None:
+            tache.message = message
+        if result is not None:
+            import json
+            tache.result = json.dumps(result)
+        if status in ('termine', 'erreur'):
+            tache.date_fin = func.now()
 
 def get_task_status(task_id):
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM taches WHERE id = ?", (task_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        d = dict(row)
+    with session_scope() as session:
+        tache = session.get(Tache, task_id)
+        if not tache:
+            return None
+        d = _model_to_dict(tache)
         import json
         if d.get('result'):
             try:
                 d['result'] = json.loads(d['result'])
-            except:
+            except (TypeError, ValueError):
                 pass
         return d
-    return None

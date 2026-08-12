@@ -1,6 +1,5 @@
 # tests/test_health.py
 import json
-import sqlite3
 
 def test_health_endpoint_success(client):
     response = client.get('/health')
@@ -10,9 +9,11 @@ def test_health_endpoint_success(client):
     assert data['database'] == 'ok'
 
 def test_health_endpoint_db_failure(monkeypatch, client):
-    def failing_connect(*args, **kwargs):
-        raise sqlite3.OperationalError("Fake DB error")
-    monkeypatch.setattr('sqlite3.connect', failing_connect)
+    import api.app as app_module
+
+    def failing_get_engine():
+        raise RuntimeError("Fake DB error")
+    monkeypatch.setattr(app_module, 'get_engine', failing_get_engine)
     response = client.get('/health')
     assert response.status_code == 503
     data = json.loads(response.data)

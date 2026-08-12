@@ -1,72 +1,74 @@
 # services/stats_service.py
-import sqlite3
-from config import DB_PATH
+from sqlalchemy import func, select
+
+from database.expressions import clean_numeric_col
+from database.models import Lot, Produit, Projet
+from database.session import session_scope
 
 ALLOWED_GROUPERS = {'type_bien', 'localisation'}
 
 def get_stats_distribution(grouper="type_bien", filtre_ville=None):
     if grouper not in ALLOWED_GROUPERS:
         grouper = 'type_bien'
-    col = f"p.{grouper}"
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    query = f"""
-        SELECT
-            {col} AS groupe,
-            COUNT(pr.id) AS nb_produits,
-            AVG(CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) /
-                NULLIF(CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL), 0)) AS prix_m2_moyen,
-            MIN(CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL)) AS prix_min,
-            MAX(CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL)) AS prix_max,
-            AVG(CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL)) AS surface_moyenne
-        FROM produits pr
-        JOIN lots l ON l.id = pr.lot_id
-        JOIN projets p ON p.id = l.projet_id
-        WHERE CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) > 0
-    """
-    params = []
-    if filtre_ville:
-        query += " AND p.localisation = ?"
-        params.append(filtre_ville)
-    query += f" GROUP BY {col} ORDER BY prix_m2_moyen ASC"
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
+    group_col = getattr(Projet, grouper)
+
+    prix_clean = clean_numeric_col(Produit.prix, 'DH')
+    surface_clean = clean_numeric_col(Produit.surface, 'm²')
+    pm2 = prix_clean / func.nullif(surface_clean, 0)
+    prix_m2_moyen_col = func.avg(pm2).label('prix_m2_moyen')
+
+    with session_scope() as session:
+        stmt = (
+            select(
+                group_col.label('groupe'),
+                func.count(Produit.id).label('nb_produits'),
+                prix_m2_moyen_col,
+                func.min(prix_clean).label('prix_min'),
+                func.max(prix_clean).label('prix_max'),
+                func.avg(surface_clean).label('surface_moyenne'),
+            )
+            .select_from(Produit)
+            .join(Lot, Lot.id == Produit.lot_id)
+            .join(Projet, Projet.id == Lot.projet_id)
+            .where(prix_clean > 0)
+        )
+        if filtre_ville:
+            stmt = stmt.where(Projet.localisation == filtre_ville)
+        stmt = stmt.group_by(group_col).order_by(prix_m2_moyen_col.asc())
+
+        rows = session.execute(stmt).all()
+
     return [{
-        "groupe": row[0] or "Inconnu",
-        "nb_produits": row[1],
-        "prix_m2_moyen": round(row[2], 2) if row[2] else 0,
-        "prix_min": row[3] or 0,
-        "prix_max": row[4] or 0,
-        "surface_moyenne": round(row[5], 2) if row[5] else 0,
+        "groupe": row.groupe or "Inconnu",
+        "nb_produits": row.nb_produits,
+        "prix_m2_moyen": round(row.prix_m2_moyen, 2) if row.prix_m2_moyen else 0,
+        "prix_min": row.prix_min or 0,
+        "prix_max": row.prix_max or 0,
+        "surface_moyenne": round(row.surface_moyenne, 2) if row.surface_moyenne else 0,
     } for row in rows]
 
 def get_distribution_prix_m2(group_by="type_bien", filtre_ville=None):
     return get_stats_distribution(grouper=group_by, filtre_ville=filtre_ville)
 
 def get_histogram_prix_m2(filtre_ville=None, filtre_type=None, bins=10):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    query = """
-        SELECT
-            CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) /
-            NULLIF(CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL), 0) AS prix_m2
-        FROM produits pr
-        JOIN lots l ON l.id = pr.lot_id
-        JOIN projets p ON p.id = l.projet_id
-        WHERE CAST(REPLACE(REPLACE(pr.prix, 'DH', ''), ' ', '') AS REAL) > 0
-          AND CAST(REPLACE(REPLACE(pr.surface, 'm²', ''), ' ', '') AS REAL) > 0
-    """
-    params = []
-    if filtre_ville:
-        query += " AND p.localisation = ?"
-        params.append(filtre_ville)
-    if filtre_type:
-        query += " AND p.type_bien = ?"
-        params.append(filtre_type)
-    cursor.execute(query, params)
-    values = [row[0] for row in cursor.fetchall() if row[0] and row[0] > 0]
-    conn.close()
+    prix_clean = clean_numeric_col(Produit.prix, 'DH')
+    surface_clean = clean_numeric_col(Produit.surface, 'm²')
+    pm2 = (prix_clean / func.nullif(surface_clean, 0)).label('prix_m2')
+
+    with session_scope() as session:
+        stmt = (
+            select(pm2)
+            .select_from(Produit)
+            .join(Lot, Lot.id == Produit.lot_id)
+            .join(Projet, Projet.id == Lot.projet_id)
+            .where(prix_clean > 0, surface_clean > 0)
+        )
+        if filtre_ville:
+            stmt = stmt.where(Projet.localisation == filtre_ville)
+        if filtre_type:
+            stmt = stmt.where(Projet.type_bien == filtre_type)
+        values = [row[0] for row in session.execute(stmt) if row[0] and row[0] > 0]
+
     if not values:
         return {'labels': [], 'counts': [], 'seuil_opportunite': 0}
     import statistics

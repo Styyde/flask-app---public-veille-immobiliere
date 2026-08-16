@@ -1,0 +1,99 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  GITOPS_REPO: ${{ secrets.GITOPS_REPO }}
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+      - name: Lint with Ruff
+        run: ruff check .
+
+      - name: Run Trivy (filesystem)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} .
+          docker tag ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} ${{ env.ECR_REPOSITORY }}:latest
+
+      - name: Run Trivy (image)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          # Certaines CVE (ex: gstreamer1.0-plugins-bad sur Ubuntu Jammy) n'ont
+          # pas encore de correctif publié en amont : bloquer dessus n'apporte
+          # rien tant qu'aucun patch n'existe. On ne bloque que sur les CVE
+          # réellement corrigeables mais non corrigées.
+          ignore-unfixed: true
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push Docker image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+
+      - name: Update GitOps repository
+        # GITOPS_PUSH_TOKEN : PAT (fine-grained, contents:write) sur le repo
+        # flask-gitops---public-veille-immobiliere. Le GITHUB_TOKEN auto-généré
+        # par Actions ne peut pas pousser sur un autre repo que celui-ci.
+        env:
+          GITOPS_PUSH_TOKEN: ${{ secrets.GITOPS_PUSH_TOKEN }}
+        run: |
+          git clone https://x-access-token:${GITOPS_PUSH_TOKEN}@${GITOPS_REPO#https://} gitops
+          cd gitops
+          sed -i "s|tag: .*|tag: ${{ env.IMAGE_TAG }}|" apps/flask-app/values.yaml
+          git config user.email "ci-bot@example.com"
+          git config user.name "CI Bot"
+          git add apps/flask-app/values.yaml
+          git commit -m "Update image tag to ${{ env.IMAGE_TAG }}" || echo "No changes"
+          git push

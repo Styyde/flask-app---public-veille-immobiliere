@@ -4,9 +4,16 @@
 config.DB_PATH peut etre mute apres l'import de ce module (voir
 tests/conftest.py, qui pointe la base vers un fichier temporaire avant le
 premier appel reel a init_db()). Le moteur ne doit donc jamais etre construit
-au niveau module : get_engine() ne lit config.DB_PATH qu'au premier appel et
-met le resultat en cache.
+au niveau module : get_engine() ne lit config.DB_PATH/DATABASE_URL qu'au
+premier appel et met le resultat en cache.
+
+Version desktop (SQLite) : aucune variable a definir, DB_PATH suffit.
+Version web (Postgres/MySQL) : definir DATABASE_URL, ex.
+  postgresql+psycopg2://user:pass@host:5432/dbname
+  mysql+pymysql://user:pass@host:3306/dbname
 """
+import os
+
 import config
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -15,16 +22,21 @@ _engine = None
 _sessionmaker = None
 
 
+def get_database_url():
+    return os.environ.get('DATABASE_URL') or f"sqlite:///{config.DB_PATH}"
+
+
 def get_engine():
     global _engine
     if _engine is None:
-        _engine = create_engine(f"sqlite:///{config.DB_PATH}")
+        _engine = create_engine(get_database_url())
 
-        @event.listens_for(_engine, "connect")
-        def _set_sqlite_pragma(dbapi_connection, connection_record):
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA foreign_keys = ON")
-            cursor.close()
+        if _engine.dialect.name == 'sqlite':
+            @event.listens_for(_engine, "connect")
+            def _set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys = ON")
+                cursor.close()
 
     return _engine
 

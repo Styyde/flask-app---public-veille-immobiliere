@@ -20,11 +20,14 @@ from database.models import Base  # noqa: E402
 # access to the values within the .ini file in use.
 config = context.config
 
-# La base cible depend de app_config.DB_PATH, qui peut avoir ete mute apres
+# La base cible depend de DATABASE_URL (web: Postgres/MySQL) ou, a defaut,
+# de app_config.DB_PATH (desktop: SQLite), qui peut avoir ete mute apres
 # l'import de ce module (ex: tests/conftest.py pointe vers un fichier temp
 # avant le premier appel a init_db()). On fixe donc l'URL ici, au moment de
 # l'execution des migrations, plutot que dans alembic.ini.
-config.set_main_option("sqlalchemy.url", f"sqlite:///{app_config.DB_PATH}")
+from database.engine import get_database_url  # noqa: E402
+
+config.set_main_option("sqlalchemy.url", get_database_url())
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

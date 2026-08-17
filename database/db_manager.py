@@ -3,10 +3,10 @@ import os
 import sqlite3
 
 from sqlalchemy import delete, distinct, false, func, or_, select, union, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
 
 from config import DB_PATH
+from database.compat import upsert_ignore, upsert_update
 from database.expressions import clean_numeric_col, prix_m2_expr
 from database.models import (
     AnnonceMubawab, AnnonceSarouty, Favori, ListingSnapshot, Lot, Produit,
@@ -399,10 +399,7 @@ def save_annonces_sarouty(annonces_list, scrape_run_id=None):
                     quartier=a.get('quartier'),
                     ville=a.get('ville'),
                 )
-                stmt = sqlite_insert(AnnonceSarouty).values(**values).on_conflict_do_update(
-                    index_elements=['property_id'],
-                    set_={k: v for k, v in values.items() if k != 'property_id'},
-                )
+                stmt = upsert_update(AnnonceSarouty, values, index_elements=['property_id'])
                 session.execute(stmt)
                 if is_new:
                     inserted += 1
@@ -506,10 +503,7 @@ def save_annonces_mubawab(annonces_list, scrape_run_id=None):
                     ville=ville,
                     region=a.get('region'),
                 )
-                stmt = sqlite_insert(AnnonceMubawab).values(**values).on_conflict_do_update(
-                    index_elements=['url_annonce'],
-                    set_={k: v for k, v in values.items() if k != 'url_annonce'},
-                )
+                stmt = upsert_update(AnnonceMubawab, values, index_elements=['url_annonce'])
                 session.execute(stmt)
                 if is_new:
                     inserted += 1
@@ -643,11 +637,12 @@ def get_prix_m2_stats(ville=None, type_bien=None):
 def ajouter_favori(source, annonce_id, url, titre, localisation, type_bien, surface, prix, prix_m2):
     """Ajoute une annonce aux favoris."""
     with session_scope() as session:
-        stmt = sqlite_insert(Favori).values(
+        values = dict(
             source=source, annonce_id=annonce_id, url=url, titre=titre,
             localisation=localisation, type_bien=type_bien, surface=surface,
             prix=prix, prix_m2=prix_m2,
-        ).on_conflict_do_nothing(index_elements=['source', 'annonce_id'])
+        )
+        stmt = upsert_ignore(Favori, values, index_elements=['source', 'annonce_id'])
         result = session.execute(stmt)
         return result.rowcount > 0
 

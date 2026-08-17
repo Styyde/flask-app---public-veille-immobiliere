@@ -42,10 +42,6 @@ htmlcov/
 #  (ils vont dans d'autres dépôts ou ne sont pas versionnés)
 # ============================================
 terraform/
-analytics/
-email_sender/
-utils/
-
 # ============================================
 #  FICHIERS EXCLUS DU DÉPÔT APPLICATION
 # ============================================

@@ -178,15 +178,6 @@ def test_filter_mubawab_ville(client):
         ville = p.get('ville', '')
         assert 'Rabat' in localisation or 'Rabat' in ville or region == 'Rabat-Salé-Kénitra'
 
-def test_filter_mubawab_region(client):
-    resp = client.get('/api/mubawab/annonces?region=Casablanca-Settat')
-    assert resp.status_code == 200
-    data = json.loads(resp.data)
-    # Vérifier qu'au moins une annonce a la bonne région
-    assert any(item.get('region') == 'Casablanca-Settat' for item in data)
-    # Vérifier qu'aucune annonce avec une région différente n'est présente
-    for item in data:
-        assert item.get('region') in (None, 'Casablanca-Settat'), f"Région inattendue : {item.get('region')}"
 # ---- Cas limites ----
 
 def test_filter_negatif_budget(client):

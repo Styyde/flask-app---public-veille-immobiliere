@@ -4,6 +4,7 @@ from sqlalchemy import select
 from database.models import AnnonceMubawab, AnnonceSarouty, Projet
 from database.session import session_scope
 
+
 def get_location_hierarchy():
     """
     Extrait dynamiquement la hiérarchie des régions/villes et quartiers

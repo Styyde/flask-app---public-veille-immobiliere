@@ -1,6 +1,10 @@
 # scraper/sarouty.py
-import requests, re, time
-from database.db_manager import save_annonces_sarouty, init_db
+import re
+import time
+
+import requests
+
+from database.db_manager import init_db, save_annonces_sarouty
 
 API_BASE_URL = "https://b2c-be-prod.api.sarouty.ma/api/properties"
 MAX_PAGES = 5

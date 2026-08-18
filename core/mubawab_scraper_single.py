@@ -1,12 +1,12 @@
 # scraper/mubawab_scraper_single.py
 import asyncio
-import re
 import random
+import re
 
 from playwright.async_api import async_playwright
 
-from config import MUBAWAB_REGIONS, MUBAWAB_MAX_PAGES, MUBAWAB_HEADLESS
-from database.db_manager import save_annonces_mubawab, init_db
+from config import MUBAWAB_HEADLESS, MUBAWAB_MAX_PAGES, MUBAWAB_REGIONS
+from database.db_manager import init_db, save_annonces_mubawab
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -93,7 +93,6 @@ async def extract_ad_detail(page, url):
         await random_delay(0.3, 0.8)
     except Exception as e:
         print(f"   ⚠️ Erreur chargement détail : {e}")
-        pass
 
     data = {"url": url}
 
@@ -230,8 +229,7 @@ async def get_total_pages(page, base_url):
         text = await dot.inner_text()
         try:
             num = int(text.strip())
-            if num > max_page:
-                max_page = num
+            max_page = max(max_page, num)
         except ValueError:
             continue
 
@@ -242,8 +240,7 @@ async def get_total_pages(page, base_url):
                 match = re.search(r":p:(\d+)", href)
                 if match:
                     num = int(match.group(1))
-                    if num > max_page:
-                        max_page = num
+                    max_page = max(max_page, num)
     return max_page
 
 

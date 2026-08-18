@@ -2,6 +2,7 @@
 import json
 import re
 
+
 def extraire_nombre(chaine):
     if isinstance(chaine, (int, float)):
         return float(chaine)

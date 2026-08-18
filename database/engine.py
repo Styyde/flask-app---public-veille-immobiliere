@@ -14,9 +14,10 @@ Version web (Postgres/MySQL) : definir DATABASE_URL, ex.
 """
 import os
 
-import config
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
+
+import config
 
 _engine = None
 _sessionmaker = None

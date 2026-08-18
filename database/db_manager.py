@@ -8,8 +8,15 @@ from sqlalchemy.orm import selectinload
 from database.compat import upsert_ignore, upsert_update
 from database.expressions import clean_numeric_col, prix_m2_expr
 from database.models import (
-    AnnonceMubawab, AnnonceSarouty, Favori, ListingSnapshot, Lot, Produit,
-    Projet, ScrapeRun, Tache,
+    AnnonceMubawab,
+    AnnonceSarouty,
+    Favori,
+    ListingSnapshot,
+    Lot,
+    Produit,
+    Projet,
+    ScrapeRun,
+    Tache,
 )
 from database.session import session_scope
 
@@ -21,8 +28,9 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def init_db():
     """Cree/met a jour le schema en appliquant les migrations Alembic
     (voir alembic/versions/) jusqu'a la revision la plus recente."""
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     cfg = Config(os.path.join(_REPO_ROOT, 'alembic.ini'))
     cfg.set_main_option('script_location', os.path.join(_REPO_ROOT, 'alembic'))

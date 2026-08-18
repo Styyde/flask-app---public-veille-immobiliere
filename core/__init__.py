@@ -2,27 +2,27 @@
 # Rend le dossier "scraper" un package Python importable
 
 from .core import (
-    click_element,
-    get_page_soup,
-    scroll_to_bottom,
-    extraire_lots,
-    extraire_detail_projet,
     ajouter_parametre_url,
+    click_element,
+    extraire_detail_projet,
+    extraire_lots,
     extraire_types_depuis_url,
+    get_page_soup,
     retour_liste,
-    scrape_combination
+    scrape_combination,
+    scroll_to_bottom,
 )
 from .runner import run_full_scraping
 
 __all__ = [
-    "click_element",
-    "get_page_soup",
-    "scroll_to_bottom",
-    "extraire_lots",
-    "extraire_detail_projet",
     "ajouter_parametre_url",
+    "click_element",
+    "extraire_detail_projet",
+    "extraire_lots",
     "extraire_types_depuis_url",
+    "get_page_soup",
     "retour_liste",
+    "run_full_scraping",
     "scrape_combination",
-    "run_full_scraping"
+    "scroll_to_bottom"
 ]

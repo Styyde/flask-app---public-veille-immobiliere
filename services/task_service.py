@@ -1,7 +1,9 @@
+import asyncio
 import threading
 import traceback
-import asyncio
+
 from database.db_manager import update_task_status
+
 
 def run_scraper_sync(task_id, source, target_func, args, kwargs):
     """
@@ -10,9 +12,9 @@ def run_scraper_sync(task_id, source, target_func, args, kwargs):
     try:
         update_task_status(task_id, 'en_cours', message=f"Lancement du scraping {source}...")
         result = target_func(*args, **kwargs)
-        update_task_status(task_id, 'termine', message=f"Scraping terminé.", result=result)
+        update_task_status(task_id, 'termine', message="Scraping terminé.", result=result)
     except Exception as e:
-        error_msg = f"Erreur lors du scraping {source}: {str(e)}"
+        error_msg = f"Erreur lors du scraping {source}: {e!s}"
         print(f"[{task_id}] {error_msg}")
         traceback.print_exc()
         update_task_status(task_id, 'erreur', message=error_msg)
@@ -30,9 +32,9 @@ def run_scraper_async(task_id, source, target_coro_func, args, kwargs):
         
         result = loop.run_until_complete(target_coro_func(*args, **kwargs))
         
-        update_task_status(task_id, 'termine', message=f"Scraping terminé.", result=result)
+        update_task_status(task_id, 'termine', message="Scraping terminé.", result=result)
     except Exception as e:
-        error_msg = f"Erreur lors du scraping {source}: {str(e)}"
+        error_msg = f"Erreur lors du scraping {source}: {e!s}"
         print(f"[{task_id}] {error_msg}")
         traceback.print_exc()
         update_task_status(task_id, 'erreur', message=error_msg)

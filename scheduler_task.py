@@ -1,16 +1,18 @@
 # scheduler_task.py
 # Script à exécuter automatiquement toutes les 5 jours
 import asyncio
-import sys
 import os
+import sys
 from datetime import datetime
 
 # Ajouter le chemin du projet pour les imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from scraper.runner import run_full_scraping
-from email_sender.sender import envoyer_rapport_email
+
 from database.db_manager import init_db
+from email_sender.sender import envoyer_rapport_email
+
 
 def log_message(msg):
     """Affiche un message avec timestamp."""

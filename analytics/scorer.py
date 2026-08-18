@@ -1,13 +1,14 @@
 # analytics/scorer.py
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import statistics
 import re
+import statistics
 from collections import defaultdict
 
-from services.filter_service import filtrer_produits, filtrer_sarouty, filtrer_mubawab
+from services.filter_service import filtrer_mubawab, filtrer_produits, filtrer_sarouty
 from services.type_mapping import get_normalized_type
 
 
@@ -336,7 +337,7 @@ def afficher_top_opportunites(limit=10, filtres=None):
         print(f" 📐 Surface    : {p['surface']:.0f} m²")
         print(f" 💰 Prix       : {p['prix']:,.0f} DH")
         print(f" 📊 Prix/m²    : {p['prix_m2']:,.2f} DH/m²")
-        if 'moyenne_groupe' in p and p['moyenne_groupe']:
+        if p.get('moyenne_groupe'):
             print(f" 📈 Moyenne réf.: {p['moyenne_groupe']:,.2f} DH/m²  ({p['type_bien']})")
         if 'ecart_pourcent' in p and p['ecart_pourcent'] != 0:
             print(f" 🎯 Écart      : {p['ecart_pourcent']:.1f}%")

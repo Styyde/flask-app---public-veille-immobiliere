@@ -2,7 +2,6 @@ import asyncio
 import os
 import random
 import re
-import sys
 from urllib.parse import urljoin
 
 # ============================================================

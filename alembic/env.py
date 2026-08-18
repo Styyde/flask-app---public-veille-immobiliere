@@ -2,8 +2,7 @@ import os
 import sys
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
@@ -13,8 +12,7 @@ from alembic import context
 # depuis init_db()).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import config as app_config  # noqa: E402  (le config.py de l'application, pas celui d'Alembic)
-from database.models import Base  # noqa: E402
+from database.models import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -25,7 +23,7 @@ config = context.config
 # l'import de ce module (ex: tests/conftest.py pointe vers un fichier temp
 # avant le premier appel a init_db()). On fixe donc l'URL ici, au moment de
 # l'execution des migrations, plutot que dans alembic.ini.
-from database.engine import get_database_url  # noqa: E402
+from database.engine import get_database_url
 
 config.set_main_option("sqlalchemy.url", get_database_url())
 

@@ -4,11 +4,11 @@ import traceback
 from flask import Blueprint, jsonify, request
 
 from services.trends_service import (
-    get_evolution_prix_m2,
-    get_evolution_nb_annonces,
-    get_zones_disponibles,
-    get_types_disponibles,
     GRANULARITES,
+    get_evolution_nb_annonces,
+    get_evolution_prix_m2,
+    get_types_disponibles,
+    get_zones_disponibles,
 )
 
 trends_bp = Blueprint('trends', __name__)

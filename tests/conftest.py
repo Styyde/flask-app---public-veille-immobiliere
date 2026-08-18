@@ -2,6 +2,7 @@
 import os
 import sys
 import tempfile
+
 import pytest
 
 # ---- 1. Ajouter le chemin racine au PYTHONPATH ----
@@ -9,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ---- 2. Configurer une base temporaire AVANT d'importer api.app ----
 import config
+
 db_fd, db_path = tempfile.mkstemp(suffix='.db')
 config.DB_PATH = db_path
 

@@ -1,8 +1,9 @@
 # services/data_service.py
-import pandas as pd
 import re
-from .filter_service import filtrer_produits, filtrer_sarouty, filtrer_mubawab
+
 from utils.text_parser import extraire_etage_depuis_texte
+
+from .filter_service import filtrer_mubawab, filtrer_produits, filtrer_sarouty
 
 
 def get_all_listings():

@@ -5,6 +5,7 @@
 import re
 import unicodedata
 
+
 def nettoyer_accents(texte):
     """
     Supprime les accents d'une chaîne de caractères (ex: É -> E, ô -> o).

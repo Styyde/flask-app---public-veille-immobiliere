@@ -1,13 +1,17 @@
 # tests/test_services.py
-import pytest
-from services.listings_service import get_all_listings
-from services.stats_service import get_stats_distribution, get_histogram_prix_m2
-from services.location_service import get_location_hierarchy, get_all_sublocations_for
-from services.type_mapping import get_normalized_type, get_brut_types_for_normalized, get_all_normalized_types
-from services.task_service import start_scraping_task
-from database.db_manager import create_task, get_task_status
 import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+from database.db_manager import create_task, get_task_status
+from services.listings_service import get_all_listings
+from services.location_service import get_all_sublocations_for, get_location_hierarchy
+from services.stats_service import get_histogram_prix_m2, get_stats_distribution
+from services.task_service import start_scraping_task
+from services.type_mapping import (
+    get_all_normalized_types,
+    get_brut_types_for_normalized,
+    get_normalized_type,
+)
 
 # ---- type_mapping ----
 

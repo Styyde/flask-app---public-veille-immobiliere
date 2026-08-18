@@ -1,6 +1,8 @@
 # compter_produits_par_lot.py
 import sqlite3
+
 from config import DB_PATH
+
 
 def compter_produits_par_lot():
     conn = sqlite3.connect(DB_PATH)

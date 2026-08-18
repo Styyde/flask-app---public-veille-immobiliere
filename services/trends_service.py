@@ -13,7 +13,8 @@ from collections import defaultdict
 
 from config import ZONES_SUIVIES
 from database.db_manager import get_snapshots
-from .type_mapping import get_normalized_type, get_all_normalized_types
+
+from .type_mapping import get_all_normalized_types, get_normalized_type
 
 GRANULARITES = ('run', 'jour', 'semaine', 'mois')
 

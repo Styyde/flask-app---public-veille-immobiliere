@@ -1,6 +1,7 @@
 # tests/test_health.py
 import json
 
+
 def test_health_endpoint_success(client):
     response = client.get('/health')
     assert response.status_code == 200

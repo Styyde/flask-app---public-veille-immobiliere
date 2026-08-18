@@ -14,12 +14,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy import select
 
 from database.db_manager import (
+    _clean_numeric,
+    _insert_snapshots,
+    _parse_prix_m2,
+    finish_scrape_run,
     init_db,
     start_scrape_run,
-    finish_scrape_run,
-    _insert_snapshots,
-    _clean_numeric,
-    _parse_prix_m2,
 )
 from database.models import AnnonceMubawab, AnnonceSarouty, Lot, Produit, Projet
 from database.session import session_scope

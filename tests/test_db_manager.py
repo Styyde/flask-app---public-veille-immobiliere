@@ -1,27 +1,27 @@
 # tests/test_db_manager.py
-import json
 import uuid
-import pytest
+
 from database.db_manager import (
+    ajouter_favori,
+    create_task,
+    est_favori,
+    get_annonces_mubawab_filtered,
+    get_annonces_sarouty_filtered,
     get_existing_urls,
-    save_projets,
-    save_annonces_sarouty,
-    save_annonces_mubawab,
+    get_favoris,
+    get_favoris_set,
+    get_prix_m2_stats,
     get_projet_detail,
     get_projets_resume,
-    get_annonces_sarouty_filtered,
-    get_annonces_mubawab_filtered,
     get_statistiques_globales,
-    get_prix_m2_stats,
-    ajouter_favori,
-    supprimer_favori,
-    get_favoris,
-    est_favori,
-    get_favoris_set,
-    create_task,
-    update_task_status,
     get_task_status,
+    save_annonces_mubawab,
+    save_annonces_sarouty,
+    save_projets,
+    supprimer_favori,
+    update_task_status,
 )
+
 
 def test_get_existing_urls(app):
     urls = get_existing_urls()

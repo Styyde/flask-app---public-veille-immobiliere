@@ -1,13 +1,17 @@
 # services/analysis_service.py
 import logging
-import statistics
 import re
+import statistics
 from collections import defaultdict
 
-from .filter_service import filtrer_produits, filtrer_sarouty, filtrer_mubawab
-from .type_mapping import get_normalized_type
+from analytics.scorer import (
+    annoter_opportunites_sur_donnees,
+    calculer_opportunites_sur_donnees,
+)
+
 from .data_sanitizer import filter_for_stats
-from analytics.scorer import calculer_opportunites_sur_donnees, annoter_opportunites_sur_donnees
+from .filter_service import filtrer_mubawab, filtrer_produits, filtrer_sarouty
+from .type_mapping import get_normalized_type
 
 logger = logging.getLogger(__name__)
 

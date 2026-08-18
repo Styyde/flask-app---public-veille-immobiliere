@@ -10,17 +10,16 @@ op.create_table()/op.create_index() : cette migration doit etre un no-op sur
 les bases existantes (alomrane.db, data/alomrane.db) que l'ancien init_db()
 avait deja creees en SQL brut, et une creation complete sur une base neuve.
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
-
 from database.models import Base
 
 # revision identifiers, used by Alembic.
 revision: str = 'a759e0536c7a'
-down_revision: Union[str, Sequence[str], None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # Ordre respectant les dependances de FK (parents avant enfants).
 _TABLE_ORDER = [

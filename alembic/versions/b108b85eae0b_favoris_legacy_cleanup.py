@@ -12,16 +12,17 @@ Idempotente : no-op sur une base deja a jour (nouvelle base creee par
 0001_baseline, ou base ayant deja subi cette migration en code avant ce
 cutover vers Alembic).
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'b108b85eae0b'
-down_revision: Union[str, Sequence[str], None] = 'a759e0536c7a'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'a759e0536c7a'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 _COLUMNS_TO_ADD = {
     'annonce_id': 'TEXT NOT NULL DEFAULT ""',

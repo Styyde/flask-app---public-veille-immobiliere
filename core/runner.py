@@ -1,13 +1,23 @@
 # scraper/runner.py
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database.db_manager import init_db, save_projets, get_existing_urls
 import asyncio
+
 import nodriver as uc
 
-from config import REGIONS, TYPES_BIENS, HEADLESS, LIMITE_PAGES, BASE_URL, MAX_PAGES_PAR_LOT
+from config import (
+    BASE_URL,
+    HEADLESS,
+    LIMITE_PAGES,
+    MAX_PAGES_PAR_LOT,
+    REGIONS,
+    TYPES_BIENS,
+)
 from core.core import scrape_combination
+from database.db_manager import get_existing_urls, init_db, save_projets
+
 
 async def run_full_scraping(headless=HEADLESS, limit_pages=LIMITE_PAGES, base_url=BASE_URL, deep_scrape=False):
     """

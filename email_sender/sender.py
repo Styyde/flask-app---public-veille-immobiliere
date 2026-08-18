@@ -1,8 +1,9 @@
 # email_sender/sender.py
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 from analytics.scorer import get_top_opportunities_for_email
 
 # ============================================================

@@ -1,7 +1,10 @@
 # services/listings_service.py
 import re
-from .filter_service import filtrer_produits, filtrer_sarouty, filtrer_mubawab
+
 from utils.text_parser import extraire_etage_depuis_texte
+
+from .filter_service import filtrer_mubawab, filtrer_produits, filtrer_sarouty
+
 
 def _clean_number(text):
     """

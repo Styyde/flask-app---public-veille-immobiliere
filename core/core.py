@@ -4,11 +4,11 @@
 import asyncio
 import sys
 import warnings
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-from config import BASE_URL
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-import nodriver as uc
 from bs4 import BeautifulSoup
+
+from config import BASE_URL
 
 # --- Correctif Windows ---
 if sys.platform == 'win32':
@@ -440,7 +440,7 @@ async def scrape_combination(browser, region_id, region_name, type_code, type_la
                 full_link = f"{base_domain}/{href}"
             
             if full_link in existing_urls:
-                print(f"   ⏭️  Produit déjà traité (doublon), on passe.")
+                print("   ⏭️  Produit déjà traité (doublon), on passe.")
                 continue
             existing_urls.add(full_link)
             

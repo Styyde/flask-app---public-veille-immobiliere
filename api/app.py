@@ -1,44 +1,44 @@
 # api/app.py
-import asyncio
+import os
 import traceback
 import uuid
-import os
 
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 from prometheus_flask_exporter import PrometheusMetrics
 from sqlalchemy import text
 
 from logging_config import configure_logging
+
 configure_logging()
 
+from api.trends_routes import trends_bp
 from config import REGIONS
-from database.engine import get_engine
+from core.mubawab_scraper_single import scraper_mubawab_sync
 from core.runner import scrape_regions
 from core.sarouty import scraper_sarouty
-from core.mubawab_scraper_single import scraper_mubawab_sync
 from database.db_manager import (
+    ajouter_favori,
+    create_task,
+    est_favori,
+    get_favoris,
     get_projet_detail,
     get_statistiques_globales,
+    get_task_status,
     init_db,
-    ajouter_favori,
     supprimer_favori,
-    get_favoris,
-    est_favori,
-    create_task,
-    get_task_status
 )
-from services.task_service import start_scraping_task
+from database.engine import get_engine
+from services.analysis_service import get_analytics_dashboard
 from services.filter_service import (
-    parse_filtres_from_request,
     filtrer_alomrane,
+    filtrer_mubawab,
     filtrer_produits,
     filtrer_sarouty,
-    filtrer_mubawab,
     get_filtres_disponibles,
     get_prix_m2_moyen_par_groupe,
+    parse_filtres_from_request,
 )
-from services.analysis_service import get_analytics_dashboard
-from api.trends_routes import trends_bp
+from services.task_service import start_scraping_task
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 app = Flask(__name__, template_folder=os.path.join(base_dir, 'templates'), static_folder=os.path.join(base_dir, 'static'))
@@ -64,7 +64,7 @@ def health_check():
             conn.execute(text('SELECT 1'))
     except Exception as e:
         status['status'] = 'unhealthy'
-        status['database'] = f'error: {str(e)}'
+        status['database'] = f'error: {e!s}'
         return jsonify(status), 503
     return jsonify(status), 200
 # ----------------------------------
@@ -168,8 +168,9 @@ def moyennes():
 
 @app.route('/api/filtrer', methods=['GET'])
 def filtrer_legacy():
-    from services.filter_service import get_filtered_data
     import pandas as pd
+
+    from services.filter_service import get_filtered_data
     try:
         filtres = parse_filtres_from_request(request.args)
         source = filtres.pop('source', 'all')

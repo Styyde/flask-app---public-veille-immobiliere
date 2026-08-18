@@ -1,9 +1,6 @@
 # tests/test_routes.py
 import json
-import uuid
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 # ---- Routes existantes ----
 

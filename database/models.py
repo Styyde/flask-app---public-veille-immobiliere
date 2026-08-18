@@ -2,8 +2,16 @@
 """Modeles SQLAlchemy declaratifs, miroir exact du schema historique cree par
 l'ancien init_db() (voir alembic/versions/0001_baseline.py pour la creation)."""
 from sqlalchemy import (
-    Column, Integer, Float, String, Text, DateTime, ForeignKey,
-    UniqueConstraint, Index, text,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import declarative_base, relationship
 

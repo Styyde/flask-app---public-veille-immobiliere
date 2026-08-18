@@ -1,6 +1,6 @@
 # main.py
-import sys
 import argparse
+
 
 def main():
     parser = argparse.ArgumentParser(description="Al Omrane Analyzer")

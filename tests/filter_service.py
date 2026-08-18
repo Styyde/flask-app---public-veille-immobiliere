@@ -1,18 +1,20 @@
 # services/filter_service.py
 import sqlite3
+
 import pandas as pd
+
 from config import DB_PATH
 from database.db_manager import (
-    get_annonces_sarouty_filtered,
     get_annonces_mubawab_filtered,
-    get_projets_resume,
-    get_types_by_source,
-    get_villes_by_source,
-    get_statistiques_globales,
+    get_annonces_sarouty_filtered,
     get_prix_m2_stats,
+    get_projets_resume,
+    get_statistiques_globales,
+    get_villes_by_source,
 )
-from .type_mapping import get_brut_types_for_normalized, get_all_normalized_types
+
 from .data_sanitizer import sanitize_annonce_for_display
+from .type_mapping import get_all_normalized_types, get_brut_types_for_normalized
 
 
 def parse_filtres_from_request(args):
@@ -71,7 +73,7 @@ def _convert_normalized_to_brut_list(normalized_type):
 
 def filtrer_alomrane(**filters):
     f = {k: v for k, v in filters.items() if k != 'source'}
-    if 'type_bien' in f and f['type_bien']:
+    if f.get('type_bien'):
         brut_list = _convert_normalized_to_brut_list(f['type_bien'])
         if brut_list:
             f['type_brut_list'] = brut_list

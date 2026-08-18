@@ -2,7 +2,7 @@
 import logging
 import os
 
-from sqlalchemy import delete, distinct, false, func, or_, select, union, update
+from sqlalchemy import Numeric, cast, delete, distinct, false, func, or_, select, union, update
 from sqlalchemy.orm import selectinload
 
 from database.compat import upsert_ignore, upsert_update
@@ -433,7 +433,7 @@ def save_annonces_sarouty(annonces_list, scrape_run_id=None):
 
 def get_annonces_sarouty_filtered(**filters):
     with session_scope() as session:
-        pm2 = func.round(AnnonceSarouty.prix / func.nullif(AnnonceSarouty.superficie, 0), 2).label('prix_m2')
+        pm2 = func.round(cast(AnnonceSarouty.prix, Numeric) / func.nullif(AnnonceSarouty.superficie, 0), 2).label('prix_m2')
         stmt = select(AnnonceSarouty, pm2)
 
         if filters.get('ville'):
@@ -537,7 +537,7 @@ def save_annonces_mubawab(annonces_list, scrape_run_id=None):
 
 def get_annonces_mubawab_filtered(**filters):
     with session_scope() as session:
-        pm2 = func.round(AnnonceMubawab.prix / func.nullif(AnnonceMubawab.superficie, 0), 2).label('prix_m2')
+        pm2 = func.round(cast(AnnonceMubawab.prix, Numeric) / func.nullif(AnnonceMubawab.superficie, 0), 2).label('prix_m2')
         stmt = select(AnnonceMubawab, pm2)
 
         if filters.get('ville'):

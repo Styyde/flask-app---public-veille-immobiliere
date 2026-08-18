@@ -3,7 +3,6 @@ import json
 import uuid
 import pytest
 from database.db_manager import (
-    get_connection,
     get_existing_urls,
     save_projets,
     save_annonces_sarouty,

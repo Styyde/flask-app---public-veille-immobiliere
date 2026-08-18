@@ -3,7 +3,6 @@ import os
 import sys
 import tempfile
 import pytest
-import sqlite3
 
 # ---- 1. Ajouter le chemin racine au PYTHONPATH ----
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,7 +14,9 @@ config.DB_PATH = db_path
 
 # ---- 3. Maintenant on peut importer l'application (init_db() utilisera la bonne base) ----
 from api.app import app as flask_app
-from database.db_manager import init_db, get_connection
+from database.db_manager import init_db
+from database.models import AnnonceMubawab, AnnonceSarouty, Lot, Produit, Projet
+from database.session import session_scope
 
 # ---- 4. Données de test ----
 TEST_PROJETS = [
@@ -96,48 +97,30 @@ TEST_MUBAWAB = [
 
 # ---- 5. Fonction de peuplement ----
 def populate_test_db():
-    conn = get_connection()
-    cursor = conn.cursor()
+    with session_scope() as session:
+        for projet in TEST_PROJETS:
+            projet_obj = Projet(
+                url=projet["url"], region=projet["region"], type_bien=projet["type_bien"],
+                titre=projet["titre"], localisation=projet["localisation"],
+                titre_foncier=projet["titre_foncier"], description=projet["description"],
+            )
+            for lot in projet["lots"]:
+                lot_obj = Lot(
+                    lot_titre=lot["titre"], nb_unites=lot["nb_unites"],
+                    prix_min=lot["prix_min"], prix_max=lot["prix_max"],
+                )
+                for ligne in lot["lignes"]:
+                    lot_obj.produits.append(Produit(
+                        no_produit=ligne["no_produit"], surface=ligne["surface"], prix=ligne["prix"],
+                    ))
+                projet_obj.lots.append(lot_obj)
+            session.add(projet_obj)
 
-    for projet in TEST_PROJETS:
-        cursor.execute("""
-            INSERT INTO projets (url, region, type_bien, titre, localisation, titre_foncier, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (projet["url"], projet["region"], projet["type_bien"], projet["titre"],
-              projet["localisation"], projet["titre_foncier"], projet["description"]))
-        projet_id = cursor.lastrowid
-        for lot in projet["lots"]:
-            cursor.execute("""
-                INSERT INTO lots (projet_id, lot_titre, nb_unites, prix_min, prix_max)
-                VALUES (?, ?, ?, ?, ?)
-            """, (projet_id, lot["titre"], lot["nb_unites"], lot["prix_min"], lot["prix_max"]))
-            lot_id = cursor.lastrowid
-            for ligne in lot["lignes"]:
-                cursor.execute("""
-                    INSERT INTO produits (lot_id, no_produit, surface, prix)
-                    VALUES (?, ?, ?, ?)
-                """, (lot_id, ligne["no_produit"], ligne["surface"], ligne["prix"]))
+        for annonce in TEST_SAROUTY:
+            session.add(AnnonceSarouty(**annonce))
 
-    for annonce in TEST_SAROUTY:
-        cursor.execute("""
-            INSERT OR IGNORE INTO annonces_sarouty
-            (property_id, url_annonce, titre, description, prix, superficie, type_bien, quartier, ville)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (annonce["property_id"], annonce["url_annonce"], annonce["titre"],
-              annonce["description"], annonce["prix"], annonce["superficie"],
-              annonce["type_bien"], annonce["quartier"], annonce["ville"]))
-
-    for annonce in TEST_MUBAWAB:
-        cursor.execute("""
-            INSERT OR IGNORE INTO annonces_mubawab
-            (url_annonce, titre, description, prix, superficie, type_bien, localisation, ville, region)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (annonce["url_annonce"], annonce["titre"], annonce["description"],
-              annonce["prix"], annonce["superficie"], annonce["type_bien"],
-              annonce["localisation"], annonce["ville"], annonce["region"]))
-
-    conn.commit()
-    conn.close()
+        for annonce in TEST_MUBAWAB:
+            session.add(AnnonceMubawab(**annonce))
 
 # ---- 6. Fixtures ----
 @pytest.fixture(scope='session', autouse=True)

@@ -1,11 +1,10 @@
 # database/db_manager.py
+import logging
 import os
-import sqlite3
 
 from sqlalchemy import delete, distinct, false, func, or_, select, union, update
 from sqlalchemy.orm import selectinload
 
-from config import DB_PATH
 from database.compat import upsert_ignore, upsert_update
 from database.expressions import clean_numeric_col, prix_m2_expr
 from database.models import (
@@ -14,13 +13,10 @@ from database.models import (
 )
 from database.session import session_scope
 
+logger = logging.getLogger(__name__)
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-
-def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
 
 def init_db():
     """Cree/met a jour le schema en appliquant les migrations Alembic
@@ -31,7 +27,7 @@ def init_db():
     cfg = Config(os.path.join(_REPO_ROOT, 'alembic.ini'))
     cfg.set_main_option('script_location', os.path.join(_REPO_ROOT, 'alembic'))
     command.upgrade(cfg, 'head')
-    print("✅ Base de données initialisée avec succès.")
+    logger.info("Base de données initialisée avec succès.")
 
 
 def _model_to_dict(obj):
@@ -176,11 +172,11 @@ def save_projets(projets_list, scrape_run_id=None):
                     })
 
             _insert_snapshots(session, scrape_run_id, snapshot_rows)
-        print(f"💾 {inserted} projets Al Omrane insérés.")
+        logger.info("%d projets Al Omrane insérés.", inserted)
         if own_run:
             finish_scrape_run(scrape_run_id, 'succes', inserted)
-    except Exception as e:
-        print(f"❌ Erreur insertion Al Omrane : {e}")
+    except Exception:
+        logger.exception("Erreur insertion Al Omrane")
         if own_run:
             finish_scrape_run(scrape_run_id, 'erreur', inserted)
     return inserted
@@ -418,11 +414,11 @@ def save_annonces_sarouty(annonces_list, scrape_run_id=None):
                 })
 
             _insert_snapshots(session, scrape_run_id, snapshot_rows)
-        print(f"💾 {inserted} annonces Sarouty insérées.")
+        logger.info("%d annonces Sarouty insérées.", inserted)
         if own_run:
             finish_scrape_run(scrape_run_id, 'succes', inserted)
-    except Exception as e:
-        print(f"❌ Erreur insertion Sarouty : {e}")
+    except Exception:
+        logger.exception("Erreur insertion Sarouty")
         if own_run:
             finish_scrape_run(scrape_run_id, 'erreur', inserted)
     return inserted
@@ -522,11 +518,11 @@ def save_annonces_mubawab(annonces_list, scrape_run_id=None):
                 })
 
             _insert_snapshots(session, scrape_run_id, snapshot_rows)
-        print(f"💾 {inserted} annonces Mubawab insérées.")
+        logger.info("%d annonces Mubawab insérées.", inserted)
         if own_run:
             finish_scrape_run(scrape_run_id, 'succes', inserted)
-    except Exception as e:
-        print(f"❌ Erreur insertion Mubawab : {e}")
+    except Exception:
+        logger.exception("Erreur insertion Mubawab")
         if own_run:
             finish_scrape_run(scrape_run_id, 'erreur', inserted)
     return inserted

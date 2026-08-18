@@ -8,6 +8,9 @@ from flask import Flask, request, jsonify, render_template
 from prometheus_flask_exporter import PrometheusMetrics
 from sqlalchemy import text
 
+from logging_config import configure_logging
+configure_logging()
+
 from config import REGIONS
 from database.engine import get_engine
 from core.runner import scrape_regions

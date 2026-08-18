@@ -34,6 +34,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest ruff
+          # nodriver n'est pas sur PyPI (cf. Dockerfile) : installé depuis GitHub
+          pip install git+https://github.com/ultrafunkamsterdam/nodriver.git
 
       - name: Run tests
         run: pytest tests/ -v

@@ -57,7 +57,12 @@ def health_check():
     status = {
         'status': 'healthy',
         'database': 'ok',
-        'version': '1.0.0'
+        'version': '1.0.0',
+        # Tag d'image (= SHA du commit buildé par la CI) injecté par le chart
+        # Helm depuis .Values.image.tag -- permet au smoke test post-déploiement
+        # (cf. .github/workflows/ci.yml) de vérifier que le NOUVEAU déploiement
+        # sert bien le trafic, pas juste qu'un pod répond.
+        'image_tag': os.environ.get('IMAGE_TAG', 'unknown'),
     }
     try:
         with get_engine().connect() as conn:

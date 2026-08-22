@@ -1,4 +1,5 @@
 # scraper/runner.py
+import glob
 import os
 import sys
 
@@ -17,6 +18,18 @@ from config import (
 )
 from core.core import scrape_combination
 from database.db_manager import get_existing_urls, init_db, save_projets
+
+
+# nodriver cherche Chrome dans les emplacements système standards
+# (/usr/bin/chromium...), mais l'image Docker utilise le Chromium installé
+# par Playwright (RUN playwright install --with-deps chromium dans le
+# Dockerfile), qui vit dans /ms-playwright/chromium-<build>/chrome-linux64/
+# -- sans ce chemin explicite, nodriver lève FileNotFoundError. Résolution
+# par glob (pas de chemin en dur) pour survivre aux montées de version du
+# build Playwright entre deux images.
+def _chrome_executable_path():
+    matches = glob.glob("/ms-playwright/chromium-*/chrome-linux64/chrome")
+    return matches[0] if matches else None
 
 
 async def run_full_scraping(headless=HEADLESS, limit_pages=LIMITE_PAGES, base_url=BASE_URL, deep_scrape=False):
@@ -38,7 +51,7 @@ async def run_full_scraping(headless=HEADLESS, limit_pages=LIMITE_PAGES, base_ur
     existing_urls = get_existing_urls()
     print(f"📚 {len(existing_urls)} projets déjà en base (ils seront ignorés).")
     
-    browser = await uc.start(headless=headless)
+    browser = await uc.start(headless=headless, browser_executable_path=_chrome_executable_path())
     all_projects = []
     
     try:
@@ -105,7 +118,7 @@ async def scrape_regions(region_ids, headless=True, limit_pages=None, deep_scrap
     existing_urls = get_existing_urls()
     print(f"📚 {len(existing_urls)} projets déjà en base.")
     
-    browser = await uc.start(headless=headless)
+    browser = await uc.start(headless=headless, browser_executable_path=_chrome_executable_path())
     all_projects = []
     
     try:

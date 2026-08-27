@@ -65,6 +65,8 @@ dist/
 build/
 *.egg-info/
 .eggs/
+.venv-build/
+installer_output/
 
 
 # ============================================

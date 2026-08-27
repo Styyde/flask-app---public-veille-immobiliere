@@ -43,6 +43,7 @@ def parse_filtres_from_request(args):
         'budget_max': _float('budget_max'),
         'ville': args.get('ville') or None,
         'type_bien': args.get('type_bien') or None,  # normalisé
+        'region': args.get('region') or None,
         'prix_m2_min': _float('prix_m2_min'),
         'prix_m2_max': _float('prix_m2_max'),
         'surface_min': _float('surface_min'),

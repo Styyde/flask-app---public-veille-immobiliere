@@ -99,7 +99,11 @@ def scraper_sarouty(max_pages=MAX_PAGES, region_ids=None, category='1'):
             if not pid:
                 continue
 
-            detail = session.get(f"{API_BASE_URL}/{pid}").json()
+            try:
+                detail = session.get(f"{API_BASE_URL}/{pid}", timeout=15).json()
+            except requests.RequestException as e:
+                print(f"⚠️ Annonce {pid} ignorée (erreur réseau) : {e}")
+                continue
             prop = detail.get("data", {}).get("data", detail.get("data", {}))
 
             loc = prop.get("location", {})

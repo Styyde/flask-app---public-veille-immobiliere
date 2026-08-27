@@ -68,36 +68,30 @@ def get_types_by_source(source):
         return [row[0] for row in session.execute(stmt) if row[0]]
 
 def get_villes_by_source(source):
+    # La liste proposee au choix ne s'appuie que sur la colonne 'ville' dediee
+    # (jamais 'quartier'/'localisation', qui sont des sous-decoupages et
+    # pollueraient la liste). La recherche elle-meme reste elargie et matche
+    # aussi sur le quartier/la localisation (voir get_annonces_*_filtered).
     with session_scope() as session:
         if source == 'alomrane':
             stmt = select(distinct(Projet.localisation)).order_by(Projet.localisation)
         elif source == 'sarouty':
-            sub = union(
-                select(AnnonceSarouty.ville.label('valeur')),
-                select(AnnonceSarouty.quartier.label('valeur')),
-            ).subquery()
             stmt = (
-                select(sub.c.valeur)
-                .where(sub.c.valeur.isnot(None), sub.c.valeur != '')
-                .order_by(sub.c.valeur)
+                select(distinct(AnnonceSarouty.ville))
+                .where(AnnonceSarouty.ville.isnot(None), AnnonceSarouty.ville != '')
+                .order_by(AnnonceSarouty.ville)
             )
         elif source == 'mubawab':
-            sub = union(
-                select(AnnonceMubawab.ville.label('valeur')),
-                select(AnnonceMubawab.localisation.label('valeur')),
-            ).subquery()
             stmt = (
-                select(sub.c.valeur)
-                .where(sub.c.valeur.isnot(None), sub.c.valeur != '')
-                .order_by(sub.c.valeur)
+                select(distinct(AnnonceMubawab.ville))
+                .where(AnnonceMubawab.ville.isnot(None), AnnonceMubawab.ville != '')
+                .order_by(AnnonceMubawab.ville)
             )
         else:
             sub = union(
                 select(Projet.localisation.label('ville')),
                 select(AnnonceSarouty.ville.label('ville')),
-                select(AnnonceSarouty.quartier.label('ville')),
                 select(AnnonceMubawab.ville.label('ville')),
-                select(AnnonceMubawab.localisation.label('ville')),
             ).subquery()
             stmt = (
                 select(sub.c.ville)

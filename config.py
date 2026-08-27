@@ -36,16 +36,29 @@ MAX_PAGES_PAR_LOT = 3
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get('DB_PATH', os.path.join(BASE_DIR, 'alomrane.db'))
 
-# ---- Suivi de l'évolution dans le temps ----
-# Zones surveillées pour le tableau de bord d'évolution (prix/m², nombre d'annonces).
-# Un quartier peut être isolé de sa ville-mère en le déclarant explicitement (ex: Souissi vs Rabat).
-ZONES_SUIVIES = [
-    {"label": "Casablanca", "ville": "Casablanca"},
-    {"label": "Rabat", "ville": "Rabat"},
-    {"label": "Souissi", "ville": "Rabat", "quartier": "Souissi"},
-]
+# Note : le dashboard d'évolution (prix/m², nombre d'annonces) ne se configure
+# plus ici -- les villes suivies sont dérivées dynamiquement des données
+# scrapées (voir services/trends_service.get_villes_disponibles).
+
+# ---- Sarouty ----
+# `loc` = identifiant interne Sarouty pour la ville, tel qu'utilisé dans l'URL
+# de recherche du site (ex: sarouty.ma/recherche/?cat=1&trans=1&loc=55 -> Kénitra).
+# `trans` (1=achat/2=location) et `cat` (1=résidentiel/2=commercial) de cette
+# même URL correspondent aux filtres "buy_or_rent" et "category" déjà gérés
+# par core/sarouty.scraper_sarouty (indépendants de la ville).
+SAROUTY_REGIONS = {
+    "casablanca": {"nom": "Casablanca", "loc": 35},
+    "rabat": {"nom": "Rabat", "loc": 113},
+    "kenitra": {"nom": "Kénitra", "loc": 55},
+    "sale": {"nom": "Salé", "loc": 103},
+}
 
 # ---- Mubawab ----
+# Casablanca/Rabat : recherche multi-catégories (villas, terrains, riads...).
+# Les villes ci-dessous utilisent des URLs "terrains-a-vendre" (fournies telles
+# quelles) -- ce sont des marchés plus petits où seuls les lots de terrain sont
+# suivis pour l'instant. Rien n'empêche de repasser sur une URL multi-catégories
+# si Mubawab en propose une pour ces villes plus tard.
 MUBAWAB_REGIONS = {
     "casablanca": {
         "nom": "Casablanca",
@@ -54,6 +67,26 @@ MUBAWAB_REGIONS = {
     "rabat": {
         "nom": "Rabat",
         "url": "https://www.mubawab.ma/fr/ct/rabat/immobilier-a-vendre-all:sc:land-sale,riad-sale,villa-sale",
+    },
+    "kenitra": {
+        "nom": "Kénitra",
+        "url": "https://www.mubawab.ma/fr/st/k%C3%A9nitra/terrains-a-vendre",
+    },
+    "sale": {
+        "nom": "Salé",
+        "url": "https://www.mubawab.ma/fr/st/sal%C3%A9/terrains-a-vendre",
+    },
+    "rommani": {
+        "nom": "Rommani",
+        "url": "https://www.mubawab.ma/fr/st/rommani/terrains-a-vendre",
+    },
+    "khemisset": {
+        "nom": "Khémisset",
+        "url": "https://www.mubawab.ma/fr/st/kh%C3%A9misset/terrains-a-vendre",
+    },
+    "bouznika": {
+        "nom": "Bouznika",
+        "url": "https://www.mubawab.ma/fr/st/bouznika/terrains-a-vendre",
     },
 }
 MUBAWAB_MAX_PAGES = 3

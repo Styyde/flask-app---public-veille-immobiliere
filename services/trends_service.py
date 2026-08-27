@@ -1,151 +1,174 @@
 # services/trends_service.py
 """
-Agrégation de l'historique des annonces (table listing_snapshots) pour visualiser
-l'évolution du prix/m² et du nombre d'annonces dans le temps, par type de bien et par zone.
+Agrégation de l'historique des annonces (table listing_snapshots) pour deux
+analyses temporelles du dashboard "Évolution" :
 
-Chaque scrape (manuel, tous les ~2 semaines) écrit un snapshot par annonce vue. La
-granularité par défaut ('run') fait donc correspondre un point de courbe à une
-campagne de scraping, ce qui colle à la cadence réelle de collecte. Les granularités
-calendaires (jour/semaine/mois) sont disponibles pour plus tard si la cadence change.
+1. Répartition des annonces par type de bien sur une période choisie.
+2. Comparaison de plusieurs villes (médiane du prix/m², stock d'annonces)
+   entre une période à analyser et une période de référence, elles aussi
+   choisies manuellement.
+
+La liste des villes suivies n'est PAS configurée à l'avance : elle est dérivée
+dynamiquement des villes réellement présentes dans les données scrapées (colonne
+`ville` de listing_snapshots), pour couvrir automatiquement toute nouvelle ville
+ajoutée aux scrapers sans toucher au code de ce module.
 """
 import datetime
+import statistics
 from collections import defaultdict
 
-from config import ZONES_SUIVIES
 from database.db_manager import get_snapshots
 
 from .type_mapping import get_all_normalized_types, get_normalized_type
 
-GRANULARITES = ('run', 'jour', 'semaine', 'mois')
 
-_ZONES_AVEC_QUARTIER = [z for z in ZONES_SUIVIES if z.get('quartier')]
-_ZONES_VILLE_SEULE = [z for z in ZONES_SUIVIES if not z.get('quartier')]
-_QUARTIERS_DEDIES_PAR_VILLE = defaultdict(set)
-for _z in _ZONES_AVEC_QUARTIER:
-    _QUARTIERS_DEDIES_PAR_VILLE[_z['ville'].strip().lower()].add(_z['quartier'].strip().lower())
+def _normaliser_ville(ville):
+    """Uniformise la casse (ex: 'casablanca' / 'CASABLANCA' -> 'Casablanca') pour
+    éviter que la même ville apparaisse comme plusieurs entrées distinctes selon
+    la source qui l'a scrapée."""
+    if not ville:
+        return None
+    return ' '.join(w.capitalize() for w in str(ville).strip().split())
 
 
-def get_zones_disponibles():
-    return [z['label'] for z in ZONES_SUIVIES]
+def get_villes_disponibles():
+    """Villes distinctes réellement présentes dans l'historique scrapé, triées."""
+    rows = get_snapshots()
+    villes = {_normaliser_ville(r.get('ville')) for r in rows}
+    villes.discard(None)
+    return sorted(villes)
 
 
 def get_types_disponibles():
     return get_all_normalized_types()
 
 
-def match_zone_label(ville, quartier):
-    """Retourne le libellé de zone suivie correspondant à (ville, quartier), ou None."""
-    ville_n = (ville or '').strip().lower()
-    quartier_n = (quartier or '').strip().lower()
-    if not ville_n:
-        return None
-
-    for z in _ZONES_AVEC_QUARTIER:
-        if ville_n == z['ville'].strip().lower() and quartier_n == z['quartier'].strip().lower():
-            return z['label']
-
-    for z in _ZONES_VILLE_SEULE:
-        if ville_n == z['ville'].strip().lower():
-            if quartier_n in _QUARTIERS_DEDIES_PAR_VILLE.get(ville_n, set()):
-                continue  # ce quartier a sa propre zone dédiée, ne pas le compter dans la ville-mère
-            return z['label']
-
-    return None
-
-
-def _villes_a_charger():
-    return sorted({z['ville'] for z in ZONES_SUIVIES})
-
-
-def _bucket_key_and_date(row, granularite):
-    raw_date = row.get('scraped_at') or row.get('run_started_at') or ''
-    date_part = str(raw_date)[:10]
-
-    if granularite == 'jour':
-        return date_part, date_part
-    if granularite == 'semaine':
-        try:
-            d = datetime.date.fromisoformat(date_part)
-            monday = d - datetime.timedelta(days=d.weekday())
-            return monday.isoformat(), monday.isoformat()
-        except ValueError:
-            return date_part or 'inconnu', date_part
-    if granularite == 'mois':
-        return date_part[:7], date_part
-    # 'run' (défaut) : un point par campagne de scraping
-    run_id = row.get('scrape_run_id')
-    key = f"run-{run_id}" if run_id else (date_part or 'inconnu')
-    return key, date_part
-
-
-def _fetch_filtered_snapshots(date_from=None, date_to=None, types=None):
-    rows = get_snapshots(date_from=date_from, date_to=date_to, villes=_villes_a_charger())
+def _fetch_normalized_snapshots(date_from=None, date_to=None, types=None):
+    rows = get_snapshots(date_from=date_from, date_to=date_to)
+    out = []
     for r in rows:
-        r['zone'] = match_zone_label(r.get('ville'), r.get('quartier'))
+        ville = _normaliser_ville(r.get('ville'))
+        if not ville:
+            continue
+        r = dict(r)
+        r['ville'] = ville
         r['type_normalise'] = get_normalized_type(r.get('type_bien')) or 'Autre'
-    rows = [r for r in rows if r['zone']]
+        out.append(r)
     if types:
         types_set = set(types)
-        rows = [r for r in rows if r['type_normalise'] in types_set]
-    return rows
+        out = [r for r in out if r['type_normalise'] in types_set]
+    return out
 
 
-def _build_series(rows, granularite, aggregate_fn):
-    """
-    aggregate_fn reçoit la liste des lignes d'un (bucket, serie) et retourne la valeur du point.
-    Regroupe par (bucket, type_normalise + zone), trie les buckets chronologiquement.
-    """
-    buckets = defaultdict(lambda: defaultdict(list))
-    bucket_dates = {}
-
+def _dedupe_dernieres_annonces(rows):
+    """Une même annonce vue plusieurs fois dans la période ne doit compter
+    qu'une fois (avec sa version la plus récente) -- sinon un simple
+    re-scraping gonflerait artificiellement les comptes/stocks."""
+    dernier = {}
     for r in rows:
-        bucket, date_part = _bucket_key_and_date(r, granularite)
-        serie_key = f"{r['type_normalise']} — {r['zone']}"
-        buckets[bucket][serie_key].append(r)
-        if bucket not in bucket_dates or date_part < bucket_dates[bucket]:
-            bucket_dates[bucket] = date_part
+        cle = r.get('listing_key')
+        if not cle:
+            continue
+        date = str(r.get('scraped_at') or '')
+        if cle not in dernier or date > str(dernier[cle].get('scraped_at') or ''):
+            dernier[cle] = r
+    return list(dernier.values())
 
-    sorted_buckets = sorted(buckets.keys(), key=lambda b: bucket_dates.get(b, ''))
-    series_keys = sorted({sk for b in buckets.values() for sk in b.keys()})
 
-    series = []
-    for sk in series_keys:
-        points = []
-        for b in sorted_buckets:
-            group_rows = buckets[b].get(sk, [])
-            points.append({
-                'periode': bucket_dates.get(b, b),
-                'valeur': aggregate_fn(group_rows) if group_rows else None,
-                'nb_annonces': len(group_rows),
-            })
-        series.append({'serie': sk, 'points': points})
+def _variation_pct(actuel, precedent):
+    if not precedent:
+        return None
+    return round((actuel - precedent) / precedent * 100, 1)
+
+
+# ============================================================
+# Repartition des annonces par type de bien -- "combien pese chaque type
+# dans le marche observe sur la periode choisie", en % du total.
+# ============================================================
+
+def get_distribution_types(date_from=None, date_to=None):
+    """Repartition des annonces par type de bien sur une periode (par defaut
+    les 30 derniers jours si aucune date n'est fournie), en nombre et en %
+    du total."""
+    if not date_from and not date_to:
+        date_from = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
+
+    rows = _fetch_normalized_snapshots(date_from=date_from, date_to=date_to)
+    rows = _dedupe_dernieres_annonces(rows)
+
+    compte = defaultdict(int)
+    for r in rows:
+        compte[get_normalized_type(r.get('type_bien')) or 'Autre'] += 1
+
+    total = sum(compte.values())
+    distribution = [
+        {
+            'type': type_bien,
+            'nb_annonces': n,
+            'pourcentage': round(n / total * 100, 1) if total else 0,
+        }
+        for type_bien, n in sorted(compte.items(), key=lambda item: -item[1])
+    ]
 
     return {
-        'granularite': granularite,
-        'periodes': [bucket_dates.get(b, b) for b in sorted_buckets],
-        'series': series,
+        'date_from': date_from,
+        'date_to': date_to,
+        'total_annonces': total,
+        'distribution': distribution,
     }
 
 
-def get_evolution_prix_m2(granularite='run', date_from=None, date_to=None, types=None):
-    if granularite not in GRANULARITES:
-        granularite = 'run'
-    rows = _fetch_filtered_snapshots(date_from, date_to, types)
-    rows = [r for r in rows if r.get('prix_m2') and r['prix_m2'] > 0]
+# ============================================================
+# Comparaison entre villes -- "Rabat vs Casablanca vs Marrakech", filtrable
+# par type de bien, sur une periode a analyser vs une periode de reference,
+# toutes deux choisies manuellement (pas de notion de "run precedent" ici :
+# l'utilisateur decide explicitement ce qu'il compare a quoi).
+# ============================================================
 
-    def moyenne_prix_m2(group_rows):
-        valeurs = [r['prix_m2'] for r in group_rows]
-        return round(sum(valeurs) / len(valeurs), 2)
+def get_comparaison_villes(villes=None, type_bien=None, date_from=None, date_to=None,
+                            compare_from=None, compare_to=None):
+    """Pour chaque ville (celles fournies, ou toutes si `villes` est vide) :
+    mediane du prix/m2 et stock (nombre d'annonces distinctes) sur la periode
+    a analyser, avec variation vs la periode de reference si elle est fournie.
 
-    return _build_series(rows, granularite, moyenne_prix_m2)
+    La mediane est utilisee plutot que la moyenne : un petit nombre de biens
+    tres au-dessus ou en-dessous du marche (ex: un terrain agricole scrape
+    par erreur au milieu d'appartements) ne doit pas a lui seul deplacer
+    l'indicateur -- important sur des echantillons parfois petits."""
+    types_filtre = [type_bien] if type_bien else None
 
+    def _stats_periode(d_from, d_to):
+        if not d_from and not d_to:
+            return {}
+        rows = _fetch_normalized_snapshots(date_from=d_from, date_to=d_to, types=types_filtre)
+        rows = _dedupe_dernieres_annonces(rows)
+        rows = [r for r in rows if r.get('prix_m2') and r['prix_m2'] > 0]
 
-def get_evolution_nb_annonces(granularite='run', date_from=None, date_to=None, types=None):
-    if granularite not in GRANULARITES:
-        granularite = 'run'
-    rows = _fetch_filtered_snapshots(date_from, date_to, types)
+        par_ville = defaultdict(list)
+        for r in rows:
+            par_ville[r['ville']].append(r['prix_m2'])
 
-    def compte(group_rows):
-        return len(group_rows)
+        return {
+            ville: {'mediane': round(statistics.median(valeurs), 2), 'stock': len(valeurs)}
+            for ville, valeurs in par_ville.items()
+        }
 
-    return _build_series(rows, granularite, compte)
+    stats_analyse = _stats_periode(date_from, date_to)
+    stats_comparaison = _stats_periode(compare_from, compare_to)
+
+    villes_cibles = villes if villes else sorted(stats_analyse.keys())
+
+    resultats = []
+    for ville in villes_cibles:
+        actuel = stats_analyse.get(ville)
+        precedent = stats_comparaison.get(ville)
+        resultats.append({
+            'ville': ville,
+            'mediane': actuel['mediane'] if actuel else None,
+            'stock': actuel['stock'] if actuel else 0,
+            'variation_pct': _variation_pct(actuel['mediane'], precedent['mediane']) if (actuel and precedent) else None,
+            'variation_stock_pct': _variation_pct(actuel['stock'], precedent['stock']) if (actuel and precedent) else None,
+        })
+    resultats.sort(key=lambda r: -(r['stock'] or 0))
+
+    return {'villes': resultats}

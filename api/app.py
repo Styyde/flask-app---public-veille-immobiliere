@@ -12,7 +12,7 @@ from logging_config import configure_logging
 configure_logging()
 
 from api.trends_routes import trends_bp
-from config import REGIONS
+from config import MUBAWAB_REGIONS, REGIONS, SAROUTY_REGIONS
 from core.mubawab_scraper_single import scraper_mubawab_sync
 from core.runner import scrape_regions
 from core.sarouty import scraper_sarouty
@@ -227,12 +227,13 @@ def scraper_sarouty_endpoint():
     region = data.get('region')
     category = data.get('category', '1')
 
-    if region == 'casablanca':
-        region_ids = [35]
-    elif region == 'rabat':
-        region_ids = [113]
+    if region and region != 'all':
+        info = SAROUTY_REGIONS.get(region)
+        if not info:
+            return jsonify({'error': f'Région invalide : {region}'}), 400
+        region_ids = [info['loc']]
     else:
-        region_ids = [35, 113]
+        region_ids = [r['loc'] for r in SAROUTY_REGIONS.values()]
 
     task_id = str(uuid.uuid4())
     create_task(task_id, "Sarouty", "Démarrage scraping Sarouty...")
@@ -258,7 +259,7 @@ def scraper_mubawab_endpoint():
     region = data.get('region', 'rabat')
     max_pages = data.get('max_pages', 3)
 
-    if region not in ('casablanca', 'rabat', 'all'):
+    if region != 'all' and region not in MUBAWAB_REGIONS:
         return jsonify({'error': f'Région invalide : {region}'}), 400
 
     task_id = str(uuid.uuid4())

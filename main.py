@@ -1,5 +1,23 @@
 # main.py
 import argparse
+import sys
+
+
+def _force_utf8_streams():
+    """Sur Windows, stdout/stderr utilisent par défaut le codepage console
+    (cp1252) : tout print() contenant un emoji ou un caractère hors cp1252
+    (ex: core/runner.py, core/sarouty.py) lève une UnicodeEncodeError et fait
+    planter la tâche en cours (scraping, migrations...). Corrige les deux
+    modes (web et desktop) depuis ce point d'entrée commun."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, 'reconfigure'):
+            try:
+                stream.reconfigure(encoding='utf-8', errors='replace')
+            except Exception:
+                pass
+
+
+_force_utf8_streams()
 
 
 def main():

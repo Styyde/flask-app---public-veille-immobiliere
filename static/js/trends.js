@@ -1,92 +1,110 @@
 // static/js/trends.js
-let evoPrixChart = null;
-let evoNbChart = null;
-let evoMetaLoaded = false;
+let typeDistributionChart = null;
+let trendsMetaLoaded = false;
 
-const EVO_COLOR_PALETTE = [
+const TYPE_PIE_PALETTE = [
     '#2874a6', '#e67e22', '#8e44ad', '#27ae60', '#c0392b',
-    '#16a085', '#d35400', '#2c3e50', '#f39c12', '#7f8c8d',
+    '#16a085', '#d35400', '#7f8c8d',
 ];
 
-function evoColorForIndex(i) {
-    return EVO_COLOR_PALETTE[i % EVO_COLOR_PALETTE.length];
+function isoDate(d) {
+    return d.toISOString().slice(0, 10);
+}
+
+function daysAgo(n) {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return isoDate(d);
+}
+
+function formatVariation(pct) {
+    if (pct === null || pct === undefined) {
+        return '<span class="evo-trend evo-trend-neutre">—</span>';
+    }
+    if (pct > 0) return `<span class="evo-trend evo-trend-hausse">▲ +${pct}%</span>`;
+    if (pct < 0) return `<span class="evo-trend evo-trend-baisse">▼ ${pct}%</span>`;
+    return `<span class="evo-trend evo-trend-neutre">= 0%</span>`;
 }
 
 async function initEvolutionTab() {
-    if (!evoMetaLoaded) {
-        await loadEvolutionMeta();
-        evoMetaLoaded = true;
-        const btn = document.getElementById('btn-evo-refresh');
-        if (btn) btn.addEventListener('click', loadEvolutionCharts);
+    if (!trendsMetaLoaded) {
+        await loadTrendsMeta();
+        trendsMetaLoaded = true;
+
+        const distFrom = document.getElementById('dist_date_from');
+        const distTo = document.getElementById('dist_date_to');
+        if (distFrom && !distFrom.value) distFrom.value = daysAgo(30);
+        if (distTo && !distTo.value) distTo.value = daysAgo(0);
+
+        const cvFrom = document.getElementById('cv_date_from');
+        const cvTo = document.getElementById('cv_date_to');
+        const cvCompareFrom = document.getElementById('cv_compare_from');
+        const cvCompareTo = document.getElementById('cv_compare_to');
+        if (cvFrom && !cvFrom.value) cvFrom.value = daysAgo(30);
+        if (cvTo && !cvTo.value) cvTo.value = daysAgo(0);
+        if (cvCompareFrom && !cvCompareFrom.value) cvCompareFrom.value = daysAgo(60);
+        if (cvCompareTo && !cvCompareTo.value) cvCompareTo.value = daysAgo(31);
+
+        const btnDist = document.getElementById('btn-dist-refresh');
+        if (btnDist) btnDist.addEventListener('click', loadTypeDistribution);
+
+        const btnCv = document.getElementById('btn-cv-compare');
+        if (btnCv) btnCv.addEventListener('click', loadComparaisonVilles);
     }
-    await loadEvolutionCharts();
+    await Promise.all([loadTypeDistribution(), loadComparaisonVilles()]);
 }
 
-async function loadEvolutionMeta() {
+async function loadTrendsMeta() {
     try {
         const meta = await fetchJSON('/api/trends/meta');
-        const container = document.getElementById('evo-types-filter');
-        if (!container) return;
-        container.innerHTML = (meta.types || []).map(t => `
-            <label class="evo-type-chip">
-                <input type="checkbox" class="evo-type-checkbox" value="${t}" checked>
-                ${t}
-            </label>
-        `).join('');
-        container.querySelectorAll('.evo-type-checkbox').forEach(cb => {
-            cb.addEventListener('change', loadEvolutionCharts);
-        });
+
+        const villesContainer = document.getElementById('cv-villes-filter');
+        if (villesContainer) {
+            villesContainer.innerHTML = (meta.villes || []).map(v => `
+                <label class="evo-type-chip">
+                    <input type="checkbox" class="cv-ville-checkbox" value="${v}" checked>
+                    ${v}
+                </label>
+            `).join('');
+        }
+
+        const typeSelect = document.getElementById('cv_type');
+        if (typeSelect) {
+            typeSelect.innerHTML = '<option value="">Tous</option>' +
+                (meta.types || []).map(t => `<option value="${t}">${t}</option>`).join('');
+        }
     } catch (err) {
-        console.error('Erreur chargement meta évolution:', err);
+        console.error('Erreur chargement meta tendances:', err);
     }
 }
 
-function getSelectedEvoTypes() {
-    const boxes = document.querySelectorAll('.evo-type-checkbox');
-    const all = Array.from(boxes);
-    const checked = all.filter(b => b.checked).map(b => b.value);
-    if (checked.length === 0 || checked.length === all.length) return null; // pas de filtre = tous
-    return checked;
-}
+// ---- Répartition par type de bien ----
 
-function buildEvoParams(metric) {
-    const params = new URLSearchParams();
-    params.set('metric', metric);
-    const granularite = document.getElementById('evo_granularite');
-    if (granularite && granularite.value) params.set('granularite', granularite.value);
-    const dateFrom = document.getElementById('evo_date_from');
-    if (dateFrom && dateFrom.value) params.set('date_from', dateFrom.value);
-    const dateTo = document.getElementById('evo_date_to');
-    if (dateTo && dateTo.value) params.set('date_to', dateTo.value);
-    const types = getSelectedEvoTypes();
-    if (types) params.set('types', types.join(','));
-    return params;
-}
-
-async function loadEvolutionCharts() {
+async function loadTypeDistribution() {
+    const canvas = document.getElementById('chart-type-distribution');
+    const emptyEl = document.getElementById('type-distribution-empty');
+    if (!canvas) return;
     try {
-        const [prixData, nbData] = await Promise.all([
-            fetchJSON(`/api/trends/evolution?${buildEvoParams('prix_m2')}`),
-            fetchJSON(`/api/trends/evolution?${buildEvoParams('nb_annonces')}`),
-        ]);
-        renderEvolutionChart('chart-evolution-prix', 'evo-prix-empty', 'prix', prixData, 'Prix/m² (DH)');
-        renderEvolutionChart('chart-evolution-nb', 'evo-nb-empty', 'nb', nbData, "Nombre d'annonces");
+        const params = new URLSearchParams();
+        const from = document.getElementById('dist_date_from');
+        const to = document.getElementById('dist_date_to');
+        if (from && from.value) params.set('date_from', from.value);
+        if (to && to.value) params.set('date_to', to.value);
+        const data = await fetchJSON(`/api/trends/distribution-types?${params}`);
+        renderTypeDistribution(data, emptyEl);
     } catch (err) {
-        console.error('Erreur chargement évolution:', err);
+        console.error('Erreur chargement répartition par type:', err);
     }
 }
 
-function renderEvolutionChart(canvasId, emptyElId, which, data, yLabel) {
-    const canvas = document.getElementById(canvasId);
-    const emptyEl = document.getElementById(emptyElId);
+function renderTypeDistribution(data, emptyEl) {
+    const canvas = document.getElementById('chart-type-distribution');
     if (!canvas) return;
 
-    const hasData = data && data.series && data.series.length > 0 && data.periodes.length > 0;
+    if (typeDistributionChart) { typeDistributionChart.destroy(); typeDistributionChart = null; }
 
-    if (which === 'prix' && evoPrixChart) { evoPrixChart.destroy(); evoPrixChart = null; }
-    if (which === 'nb' && evoNbChart) { evoNbChart.destroy(); evoNbChart = null; }
-
-    if (!hasData) {
+    const distribution = (data && data.distribution) || [];
+    if (distribution.length === 0) {
         if (emptyEl) emptyEl.classList.remove('hidden');
         canvas.style.visibility = 'hidden';
         return;
@@ -94,36 +112,89 @@ function renderEvolutionChart(canvasId, emptyElId, which, data, yLabel) {
     if (emptyEl) emptyEl.classList.add('hidden');
     canvas.style.visibility = 'visible';
 
-    const datasets = data.series.map((s, i) => {
-        const color = evoColorForIndex(i);
-        return {
-            label: s.serie,
-            data: s.points.map(p => p.valeur),
-            borderColor: color,
-            backgroundColor: color,
-            spanGaps: true,
-            tension: 0.25,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-        };
-    });
-
-    const chart = new Chart(canvas, {
-        type: 'line',
-        data: { labels: data.periodes, datasets },
+    typeDistributionChart = new Chart(canvas, {
+        type: 'pie',
+        data: {
+            labels: distribution.map(d => d.type),
+            datasets: [{
+                data: distribution.map(d => d.pourcentage),
+                backgroundColor: distribution.map((_, i) => TYPE_PIE_PALETTE[i % TYPE_PIE_PALETTE.length]),
+                borderColor: '#fff',
+                borderWidth: 1,
+            }],
+        },
         options: {
             responsive: true,
-            maintainAspectRatio: false,
             plugins: {
-                legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
-            },
-            scales: {
-                x: { grid: { color: CHART_COLORS.grid } },
-                y: { beginAtZero: false, title: { display: true, text: yLabel }, grid: { color: CHART_COLORS.grid } },
+                legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const item = distribution[ctx.dataIndex];
+                            return ` ${item.type} : ${item.pourcentage}% (${item.nb_annonces} annonces)`;
+                        },
+                    },
+                },
             },
         },
     });
+}
 
-    if (which === 'prix') evoPrixChart = chart;
-    else evoNbChart = chart;
+// ---- Comparaison entre villes ----
+
+function getSelectedVilles() {
+    return Array.from(document.querySelectorAll('.cv-ville-checkbox'))
+        .filter(b => b.checked)
+        .map(b => b.value);
+}
+
+async function loadComparaisonVilles() {
+    const tbody = document.querySelector('#table-comparaison-villes tbody');
+    const emptyEl = document.getElementById('cv-empty');
+    if (!tbody) return;
+
+    const villes = getSelectedVilles();
+    const dateFrom = document.getElementById('cv_date_from')?.value;
+    const dateTo = document.getElementById('cv_date_to')?.value;
+
+    if (villes.length === 0 || !dateFrom) {
+        tbody.innerHTML = '';
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const params = new URLSearchParams();
+        params.set('villes', villes.join(','));
+        const type = document.getElementById('cv_type')?.value;
+        if (type) params.set('type', type);
+        params.set('date_from', dateFrom);
+        if (dateTo) params.set('date_to', dateTo);
+        const compareFrom = document.getElementById('cv_compare_from')?.value;
+        const compareTo = document.getElementById('cv_compare_to')?.value;
+        if (compareFrom) params.set('compare_from', compareFrom);
+        if (compareTo) params.set('compare_to', compareTo);
+
+        const data = await fetchJSON(`/api/trends/comparaison-villes?${params}`);
+        const rows = data.villes || [];
+
+        if (rows.length === 0) {
+            tbody.innerHTML = '';
+            if (emptyEl) emptyEl.classList.remove('hidden');
+            return;
+        }
+        if (emptyEl) emptyEl.classList.add('hidden');
+
+        tbody.innerHTML = rows.map(r => `
+            <tr>
+                <td>${r.ville}</td>
+                <td>${formatPrixM2(r.mediane)}</td>
+                <td>${formatVariation(r.variation_pct)}</td>
+                <td>${r.stock}</td>
+                <td>${formatVariation(r.variation_stock_pct)}</td>
+            </tr>
+        `).join('');
+    } catch (err) {
+        console.error('Erreur chargement comparaison villes:', err);
+    }
 }

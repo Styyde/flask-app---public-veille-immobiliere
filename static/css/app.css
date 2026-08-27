@@ -729,6 +729,35 @@ input:focus, select:focus {
     display: none;
 }
 
+.empty-hint {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.9rem;
+    padding: 20px;
+    background: #fafbfc;
+    border-radius: 6px;
+    border: 1px dashed var(--border);
+}
+
+.empty-hint.hidden {
+    display: none;
+}
+
+.evo-trend {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.evo-trend-hausse { color: var(--success); }
+.evo-trend-baisse { color: var(--danger); }
+.evo-trend-neutre { color: var(--muted); font-weight: 400; font-style: italic; }
+
+.evo-comparison-panel {
+    margin-bottom: 16px;
+}
+
 .evo-types-filter {
     display: flex;
     flex-wrap: wrap;

@@ -243,8 +243,4 @@ ruff check .
 
 Les tests couvrent les routes de l'API, les services de filtrage, la couche de données et `/health`, y compris en cas de panne de la base.
 
-## Limites connues
 
-- **Pas d'authentification** : sur l'instance publique, les routes de scraping, de favoris et `/metrics` sont accessibles à tout visiteur.
-- Un scraping s'exécute dans le pod qui a reçu la requête : si ce pod redémarre, la tâche reste à l'état `en_cours`. Une file de tâches (Celery, SQS…) découplerait la collecte des pods web.
-- Ruff tourne en mode non bloquant (`--exit-zero`) en attendant la correction des avertissements restants.
